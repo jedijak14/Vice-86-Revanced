@@ -5,21 +5,21 @@
 //   ───────           a pink leaning line with a soft glow: the one neon touch
 //    ── ─             two fainter echo stripes under it, the nod to a sunset's bands
 //   PALOMA DRIVE 1986  the tag line in small spaced capitals
-//   PALOMA ENGINE       the renderer underneath, named (src/render/identity.js)
+//
+// The renderer has a name and an identity module behind it (src/render/identity.js) -- it is used in
+// crash reports and on the console, where the person reading it is diagnosing something -- but it is
+// not printed over the title any more. A mark is the game's face, not a place for credits.
 
 import { el } from './dom.js';
-import { ENGINE } from '../render/identity.js';
 
 export const TAG_LINE = 'Paloma Drive \u00b7 1986';
-export const ENGINE_LINE = `${ENGINE.name} \u00b7 ${ENGINE.api}`;
 
 export function wordmark(doc, className = '') {
   const root = el(doc, 'div', `wordmark ${className}`.trim(),
     el(doc, 'div', 'wordmark__title', el(doc, 'span', 'wordmark__word', 'VICE'), el(doc, 'span', 'wordmark__year', '\u201986')),
     el(doc, 'div', 'wordmark__line'),
     el(doc, 'div', 'wordmark__stripes', el(doc, 'i', ''), el(doc, 'i', '')),
-    el(doc, 'div', 'wordmark__tag', TAG_LINE),
-    el(doc, 'div', 'wordmark__engine', ENGINE_LINE));
+    el(doc, 'div', 'wordmark__tag', TAG_LINE));
   root.setAttribute('role', 'img');
   root.setAttribute('aria-label', "VICE '86");
   return root;

@@ -111,7 +111,9 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * WebGL2 or float render targets. options.settings: the game settings ({ graphics }) or a graphics object.
  */
 export async function createRenderer(canvas, options = {}) {
-  const ctx = createContext(canvas), gl = ctx.gl;
+  // `forceWebGL2` (?webgl2=force): ask for the context past the checks that would turn a weak device
+  // away. See gl.js for what that does and, importantly, what it cannot do.
+  const ctx = createContext(canvas, { force: !!options.forceWebGL2 }), gl = ctx.gl;
   const graphicsOf = (s) => (s && s.graphics ? s.graphics : s) || {};
   let quality = resolveQuality(graphicsOf(options.settings));
 

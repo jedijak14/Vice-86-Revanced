@@ -18,6 +18,9 @@ const flag = (params, name) => {
   return v !== null && v !== '0' && v !== 'false';
 };
 
+/** The only mode the renderer understands for `?webgl2`: insist on WebGL2 past the checks. */
+const WEBGL2_MODES = ['force'];
+
 const oneOf = (value, names) => (value !== null && names.includes(value.toLowerCase()) ? value.toLowerCase() : null);
 
 /**
@@ -37,6 +40,11 @@ export function parseOptions(search) {
     weather: oneOf(params.get('weather'), WEATHER_NAMES),
     freeze: flag(params, 'freeze'),
     quality: oneOf(params.get('quality'), QUALITY_NAMES),
+    /**
+     * 'force': boot past the renderer's capability checks. Which devices are refused, and what happens
+     * when you insist, is documented in render/gl.js (createContext).
+     */
+    webgl2: oneOf(params.get('webgl2'), WEBGL2_MODES),
     /** [x, z, yaw in radians] or null. */
     pos: null,
     cam: oneOf(params.get('cam'), CAMERA_NAMES),

@@ -13,10 +13,21 @@ const COMPLETION_STATUS_KHR = 0x91b1;
  * Create the WebGL2 context and gather what the renderer needs to know about the device.
  * Throws an Error with a message fit for the loading screen when the device cannot run the game.
  */
-export function createContext(canvas) {
-  const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false, desynchronized: true });
+export function createContext(canvas, { force = false } = {}) {
+  const attrs = { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false, desynchronized: true };
+  let gl = canvas.getContext('webgl2', attrs);
+  let relaxedAttrs = false;
+  if (!gl && force) {
+    // The first request is the one the game wants: a discrete GPU, and a drawing buffer that is not
+    // synchronised against the compositor. Both of those are also things a software rasteriser or a
+    // power-managed laptop driver *refuses*, and a refusal is not the same as an inability -- so asking
+    // for less is what gets a context on devices that were being turned away for the wrong reason.
+    gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false });
+    relaxedAttrs = !!gl;
+  }
   if (!gl) throw new Error('This game needs WebGL2, which this browser or device does not provide. Try a current version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.');
-  if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('This graphics device cannot render to floating-point textures (EXT_color_buffer_float is missing), which the game needs for HDR lighting.');
+  const floatTargets = gl.getExtension('EXT_color_buffer_float');
+  if (!floatTargets && !force) throw new Error('This graphics device cannot render to floating-point textures (EXT_color_buffer_float is missing), which the game needs for HDR lighting.');
   const ext = {
     parallel: gl.getExtension('KHR_parallel_shader_compile'),
     timer: gl.getExtension('EXT_disjoint_timer_query_webgl2'),
@@ -35,8 +46,20 @@ export function createContext(canvas) {
     timerQuery: !!ext.timer,
     tierHint: guessTier(renderer, gl.getParameter(gl.MAX_TEXTURE_SIZE)),
   };
-  if (caps.maxDrawBuffers < 4) throw new Error('This graphics device supports fewer than 4 render targets, which the game needs.');
-  return { gl, canvas, caps, rendererNamed, ext, maxAnisotropy: ext.aniso ? Math.min(8, gl.getParameter(ext.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1, shared: new Map(), programs: [], waiting: [], compiling: [], quietSeconds: 0, lastProgram: '' };
+  if (caps.maxDrawBuffers < 4 && !force) throw new Error('This graphics device supports fewer than 4 render targets, which the game needs.');
+  if (force && (!floatTargets || caps.maxDrawBuffers < 4 || relaxedAttrs)) {
+    // Say what was stepped over, on the console where a person diagnosing this will find it. Forcing
+    // cannot manufacture a feature: a device without float render targets is not going to draw HDR
+    // because it was asked to try, and the honest expectation is a dark or wrong image, not a
+    // downgraded one. What forcing does buy is the chance that the refusal was about the request.
+    const skipped = [];
+    if (!floatTargets) skipped.push('float render targets (EXT_color_buffer_float)');
+    if (caps.maxDrawBuffers < 4) skipped.push(`${caps.maxDrawBuffers} draw buffer(s), 4 wanted`);
+    if (relaxedAttrs) skipped.push("the 'high-performance' and desynchronised context attributes");
+    console.warn(`WebGL2 was forced past: ${skipped.join(', ')}. The renderer will run as-is on this device and may fail or draw nothing.`);
+    caps.tierHint = 'low';            // whatever the autotuner would have picked, start at the bottom
+  }
+  return { gl, canvas, caps, rendererNamed, ext, forced: !!force, floatTargets: !!floatTargets, maxAnisotropy: ext.aniso ? Math.min(8, gl.getParameter(ext.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1, shared: new Map(), programs: [], waiting: [], compiling: [], quietSeconds: 0, lastProgram: '' };
 }
 
 /** Rough preset guess from the renderer string; the UI refines it with measured frame times. */

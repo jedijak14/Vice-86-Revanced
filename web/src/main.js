@@ -158,7 +158,9 @@ export async function boot(env) {
     // ---- renderer and device detection
     stage = 'starting the renderer';
     const rendererModule = await loaders.renderer();
-    renderer = await rendererModule.createRenderer(canvas, { settings, split: options.split });
+    renderer = await rendererModule.createRenderer(canvas, {
+      settings, split: options.split, forceWebGL2: options.webgl2 === 'force',
+    });
     hooks.render = { split: renderer.split };
     // A context lost while loading (a graphics driver that gave up on a shader) must not leave the loading
     // screen standing: stop and say so, with the shader the renderer was busy with.

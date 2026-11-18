@@ -19,6 +19,7 @@
 //   --playwright path to a playwright-core module directory (default $PLAYWRIGHT_PATH
 //                or /tmp/vice-browser-tools/node_modules/playwright-core)
 //   --shot     where to write the final screenshot (default /tmp/vice-police.png)
+//   --query    extra query parameters for the page, verbatim (e.g. webgl2=force)
 //
 // A Linux build of Chromium needs libnss3 and its friends; on a machine without them, point
 // LD_LIBRARY_PATH at a directory that holds them (the @sparticuz/chromium package ships them in
@@ -44,6 +45,8 @@ const race = Math.max(0, Math.min(1, Number(opt('race', 1)) | 0));
 const drive = Math.max(0, Math.min(1, Number(opt('drive', 0)) | 0));
 const executablePath = opt('chromium', process.env.CHROMIUM_PATH || '/tmp/chromium');
 const shot = opt('shot', '/tmp/vice-police.png');
+/** Raw extra query parameters, for flags the harness has no option of its own for: --query=webgl2=force */
+const query = opt('query', '');
 const require = createRequire(import.meta.url);
 const pwPath = opt('playwright', process.env.PLAYWRIGHT_PATH || '/tmp/vice-browser-tools/node_modules/playwright-core');
 const { chromium } = require(pwPath);
@@ -75,7 +78,7 @@ page.on('console', (m) => {
 page.on('requestfailed', (r) => failedRequests.push(`${r.url()} :: ${r.failure() && r.failure().errorText}`));
 page.on('response', (r) => { if (r.status() >= 400) badResponses.push(`${r.status()} ${r.url()}`); });
 
-const url = `${base}/index.html?autostart=1&traffic=${traffic}&quality=${quality}&seed=${seed}&mute=1`;
+const url = `${base}/index.html?autostart=1&traffic=${traffic}&quality=${quality}&seed=${seed}&mute=1${query ? `&${query}` : ''}`;
 log('opening', url);
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
@@ -197,6 +200,9 @@ await page.evaluate(() => window.__vice.input(null));
 const final = reached ? await read() : null;
 if (final) {
   log('final', JSON.stringify({ phase: final.phase, ready: final.ready, engine: final.engine, engineLine: final.engineLine, police: final.police && { ...final.police, units: final.police.units.length }, crowd: final.crowd, wanted: final.wanted, hudStars: final.hudStars, hudLine: final.hudLine, hudRow: final.hudRow, race: final.race, hudStarTotal: final.hudStarTotal, hudRows: final.hudRows, hud: final.hud, stats: final.stats }));
+  // The title carries the game's mark and nothing else: no renderer credit printed over it. The
+  // probe reads the node that used to hold it, so the check fails if it ever comes back.
+  if (final.engineLine !== null) bad('wordmark', `the engine is printed on the title again: ${JSON.stringify(final.engineLine)}`);
   // The street has to be *inhabited*: a crowd of zero at traffic 2 is a bug, not a quiet evening.
   if (final.crowd && traffic > 0 && final.crowd.peds === 0 && final.phase === 'driving') warnings.push(`nobody on the pavements (${JSON.stringify(final.crowd)})`);
   // Limbs are the visible part of the rig: with a moving car and medium quality somebody has to have them.

@@ -204,17 +204,6 @@ html, body {
   text-shadow: var(--shadow);
 }
 
-/* The renderer's own name, small and quiet under the mark: it is a credit, not a headline. */
-.wordmark__engine {
-  margin-top: calc(0.9 * var(--u));
-  font-family: var(--text);
-  font-size: max(9px, calc(1.05 * var(--u)));
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--ink-35);
-  text-shadow: var(--shadow);
-}
-
 /* ------------------------------------------------------------------ HUD */
 
 .hud {
