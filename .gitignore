@@ -1,4 +1,5 @@
 /.vice-import-*/
+/.vice-snapshot/
 /dist/
 /node_modules/
 __pycache__/

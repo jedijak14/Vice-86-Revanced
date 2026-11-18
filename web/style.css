@@ -204,6 +204,17 @@ html, body {
   text-shadow: var(--shadow);
 }
 
+/* The renderer's own name, small and quiet under the mark: it is a credit, not a headline. */
+.wordmark__engine {
+  margin-top: calc(0.9 * var(--u));
+  font-family: var(--text);
+  font-size: max(9px, calc(1.05 * var(--u)));
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-35);
+  text-shadow: var(--shadow);
+}
+
 /* ------------------------------------------------------------------ HUD */
 
 .hud {
@@ -226,6 +237,33 @@ html, body {
   top: calc(5 * var(--u) + var(--safe-top));
   left: calc(5 * var(--u) + var(--safe-left));
 }
+/* Paloma PD: what the dispatch is doing about the player (src/game/police.js). One line under
+   the clock, in the same small capitals as the district name, with the heat as three pips. */
+.hud__police {
+  display: flex;
+  gap: calc(0.7 * var(--u));
+  align-items: center;
+  margin-top: calc(0.6 * var(--u));
+  font-size: max(10px, calc(1.05 * var(--u)));
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-70);
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.hud__police.is-on { opacity: 1; }
+.hud__police-label { color: var(--ink-35); }
+.hud__police-text { color: var(--pink); }
+.hud__police-pips { display: flex; gap: calc(0.35 * var(--u)); }
+.hud__police-pip {
+  width: max(3px, calc(0.5 * var(--u)));
+  height: max(3px, calc(0.5 * var(--u)));
+  border-radius: 50%;
+  background: var(--ink-18);
+}
+.hud__police-pip.is-on { background: var(--pink); }
+.ui.is-touch .hud__police { justify-content: center; }
+
 .hud__clock {
   --size: calc(3 * var(--u));
   display: flex;

@@ -75,6 +75,8 @@ class Driver {
     /** The next two lanes of the route. */
     this.next = null;
     this.afterNext = null;
+    /** A Map lane -> next lane to follow (a dispatch order, see game/police.js), or null. */
+    this.patrolRoute = null;
     this.frontLength = 2.2; // origin to front bumper
     this.rearLength = 2.2;
     this.halfWidth = 0.9;
@@ -240,9 +242,34 @@ export class TrafficSim {
   // ------------------------------------------------------------------ route
 
   _chooseRoute(car) {
-    if (!car.next) car.next = this._choose(car, car.lane);
-    if (car.next && !car.afterNext) car.afterNext = this._choose(car, car.next);
+    const route = car.patrolRoute;
+    // A dispatched driver takes the lane the route names for the lane it is on; a lane that the
+    // route does not know about (a slip road it was put on, a connector with no entry) leaves the
+    // choice to its own weighting, so it is never stranded.
+    if (route && route.has(car.lane)) {
+      car.next = route.get(car.lane);
+      car.afterNext = car.next && route.has(car.next) ? route.get(car.next) : null;
+    } else {
+      if (!car.next) car.next = this._choose(car, car.lane);
+      if (car.next && !car.afterNext) car.afterNext = this._choose(car, car.next);
+    }
     if (car.next && car.next.junction) this.graph.ensureConflicts(car.next.junction);
+  }
+
+  /**
+   * Orders a driver along `route` (a Map from a lane to the lane to take next; see the patrol
+   * dispatch) or, with null, gives it back its own choices. An order is only obeyed from the next
+   * lane, or at once when the driver is not standing in a junction: nothing here may take a
+   * granted connector away from the car that holds it.
+   */
+  setRoute(car, route) {
+    const next = route || null;
+    if (car.patrolRoute === next) return;
+    car.patrolRoute = next;
+    if (!next || car.grant) return;
+    car.next = null;
+    car.afterNext = null;
+    this._chooseRoute(car);
   }
 
   /** Picks a successor of `lane`: weighted by the kind of turn, avoiding dead ends. */

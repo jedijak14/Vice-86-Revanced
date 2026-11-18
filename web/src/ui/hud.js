@@ -83,6 +83,15 @@ function buildMap(doc) {
   return { root, canvas, north };
 }
 
+function buildPolice(doc) {
+  // Three pips, the heat the dispatch has on the player, and one line of what it is doing.
+  const pips = [0, 1, 2].map(() => el(doc, 'i', 'hud__police-pip'));
+  const text = el(doc, 'span', 'hud__police-text');
+  const root = el(doc, 'div', 'hud__police',
+    el(doc, 'span', 'hud__police-label', 'Paloma PD'), el(doc, 'span', 'hud__police-pips', ...pips), text);
+  return { root, pips, text };
+}
+
 function buildClock(doc) {
   const cell = () => el(doc, 'span', 'hud__clock-digit');
   const digits = [cell(), cell(), cell(), cell()];
@@ -98,10 +107,11 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
   const gauge = buildGauge(doc);
   const map = buildMap(doc);
   const clock = buildClock(doc);
+  const police = buildPolice(doc);
   const banner = el(doc, 'div', 'hud__banner');
   const place = el(doc, 'div', 'hud__place');
 
-  const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, banner), map.root, place, gauge.root);
+  const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, police.root, banner), map.root, place, gauge.root);
   root.setAttribute('aria-hidden', 'true');   // a visual instrument cluster; nothing here is read out
   parent.appendChild(root);
 
@@ -120,6 +130,9 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
     banner: textWriter(banner),
     bannerOn: classWriter(banner, 'is-on'),
     place: textWriter(place),
+    police: textWriter(police.text),
+    policeOn: classWriter(police.root, 'is-on'),
+    policePip: police.pips.map((node) => classWriter(node, 'is-on')),
     lamps: classWriter(gauge.lamps, 'is-on'),
     brake: classWriter(gauge.brake, 'is-on'),
     nitrous: styleWriter(gauge.nitrous, 'stroke-dashoffset'),
@@ -242,6 +255,9 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
       write.banner(model.district);
       write.bannerOn(model.districtOn);
       write.place(model.place);
+      write.police(model.police);
+      write.policeOn(Boolean(model.police));
+      for (let i = 0; i < police.pips.length; i++) write.policePip[i](model.policeHeat > i);
       write.lamps(model.headlamps);
       write.brake(model.handbrake);
       write.nitrous(NITROUS_OFFSETS[model.nitrous]);

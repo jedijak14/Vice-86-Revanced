@@ -6,6 +6,7 @@
 // wait for it.
 
 import { CARS } from '../vehicles/cars.js';
+import { ENGINE } from '../render/identity.js';
 import { allowedCar } from './garage.js';
 
 const QUALITY_NAMES = ['low', 'medium', 'high', 'ultra'];
@@ -101,6 +102,12 @@ export function createHooks() {
   const hooks = {
     phase: 'boot',
     ready: false,
+    /** The renderer the game runs on, named (src/render/identity.js). */
+    engine: ENGINE,
+    /** Paloma PD: the patrol dispatch's units and what they are doing, as plain data. */
+    police: () => (game && game.police ? game.police : null),
+    /** Paloma PD for a script: the same order the dispatch gives itself, 0..3 (see game.js). */
+    dispatch: (heat, message) => run((g) => g.orderPolice(heat, message)),
     /** Every caught error and failed shader, with context. */
     errors: [],
     stats: () => (game ? game.stats() : {}),

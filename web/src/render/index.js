@@ -57,6 +57,7 @@
 //   -> reflections + environment + fog -> glass -> rain (sky module) -> particles -> glow sprites
 //   -> temporal AA -> exhaust flames -> motion blur -> bloom + exposure -> tone map, grade -> FXAA / upscale
 
+import { ENGINE } from './identity.js';
 import { FAMILY, FAMILY_NAMES } from '../core/ids.js';
 import { m4mul, m4invert, m4perspective } from '../core/math.js';
 import { LAND_Y } from '../world/roads/lanes.js';
@@ -728,6 +729,8 @@ export async function createRenderer(canvas, options = {}) {
   const api = {
     caps: ctx.caps,
     stats,
+    /** The renderer's own name and what it is: the fork's label for the WebGL 2 engine below. */
+    engine: ENGINE,
     /** The sky module's object (setShoreField, setCity, ...), or the fallback sky ({ fallback: true }). */
     sky,
     /** The host interface (host.js), for tools. */

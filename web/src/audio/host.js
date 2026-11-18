@@ -21,6 +21,9 @@ export function createHost(options) {
     mode: 'none',                   // 'worklet' | 'script' | 'none'
     context: null,
     stats: null,                    // last stats report from the synth, if any
+    /** The bus everything is heard through, for the few sounds made on this side of the
+     * worklet (a patrol siren); null until unlock() has run. */
+    get output() { return master; },
     unlock, setMaster, postState, postEvent, suspend, resume, dispose, pollStats,
   };
   let context = null, master = null, node = null, synth = null, unlocking = false, disposed = false;

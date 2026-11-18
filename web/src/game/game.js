@@ -35,6 +35,7 @@ import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
 import { createEffects } from './effects.js';
 import { createHudFeed } from './hud.js';
+import { ENGINE } from '../render/identity.js';
 import { createAutopilot } from './autopilot.js';
 import { createNitrous } from './nitrous.js';
 import { createSkidMarks } from './skids.js';
@@ -127,7 +128,13 @@ export function createGame(deps) {
       return hit.dist;
     },
   });
-  const traffic = createTraffic({ renderer, physics, graph, models: models.traffic, seed });
+  const traffic = createTraffic({
+    renderer, physics, graph, models: models.traffic, seed,
+    // What the patrol dispatch tells the player: a toast, in the game's own words.
+    notify: (text) => { toast(text); },
+  });
+  /** Paloma PD (game/police.js): null where there is no road network to chase anyone over. */
+  const police = traffic.police;
   const effects = createEffects({ physics, audio, camera, input, settings });
   const hud = createHudFeed({ ui, world });
   const skids = createSkidMarks({ renderer, rubberFill: MARKING_FILL.RUBBER });
@@ -364,6 +371,8 @@ export function createGame(deps) {
     camera.snap();
     waterTime = 0;
     if (autopilot) autopilot.reset();
+    // The player has been moved: whatever the units were chasing is gone with it.
+    if (police) police.reset();
     traffic.clear();
     refreshSubject();
     // Traffic is placed around where the camera will be, so the camera goes there first; the
@@ -619,6 +628,8 @@ export function createGame(deps) {
     env.rain = weather.rain; env.wind = Math.hypot(weather.windX, weather.windZ); env.night = clock.env.night;
     env.timeOfDay = clock.timeOfDay; env.district = hud.district; env.neon = clock.env.switches.neon;
     audio.update(simDt, audioState);
+    // The wail of the nearest unit, silent (and unbuilt) while nobody is after the player.
+    if (police && audio.siren) audio.siren(phase.name === 'driving' ? police.siren.level : 0, police.siren.position);
     const horn = phase.name === 'driving' && input.state.horn > 0;
     if (horn !== hornOn) { hornOn = horn; audio.horn(horn); }
   }
@@ -632,6 +643,16 @@ export function createGame(deps) {
     get player() { return player; },
     /** Registry id of the car being driven. */
     get carId() { return carId; },
+    /** The renderer's own name (the engine this game was built on), for menus and tools. */
+    engine: ENGINE,
+    /** Paloma PD: what the units are doing, as plain data (null without a road network). */
+    get police() { return police ? police.snapshot() : null; },
+    /** Paloma PD for scripts: 1..3 orders an incident, 0 ends one as a completed stop. */
+    orderPolice(heat, message) {
+      if (!police) return null;
+      police.order(heat, message);
+      return police.snapshot();
+    },
 
     /** Sets the title scene up behind the loading screen, so that warm-up sees its meshes. */
     prepareTitle() {
@@ -926,6 +947,9 @@ export function createGame(deps) {
         // The room's lights follow the car's lamps and share the renderer's interior budget with them.
         showroom.writeLights(lamps, renderer.interiorLightBudget);
       } else {
+        // The dispatch works on the street while the player is driving: no policing the title
+        // scene, the room, or a frame that is not moving.
+        if (police) police.enabled = phase.name === 'driving';
         traffic.setFocus(player, camera);
         traffic.update(simDt, env.sunElevation, weather.rain);
         traffic.writeLamps(lamps, camera.position, frame.time);
@@ -937,7 +961,7 @@ export function createGame(deps) {
 
       // The world follows the camera on the street, and in the garage the car waiting up there.
       world.update(inGarage ? player.pos : camera.position, dt);
-      if (phase.name === 'driving') hud.update(simDt, player, clock.timeOfDay, controls.handbrake, nitrous);
+      if (phase.name === 'driving') hud.update(simDt, player, clock.timeOfDay, controls.handbrake, nitrous, police ? police.status : null);
       if (audio) {
         sampleSurroundings(simDt);
         feedAudio(simDt);

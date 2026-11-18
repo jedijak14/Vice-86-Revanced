@@ -10,10 +10,12 @@
 //
 // Parked vehicles come from tile data and are the same kind of box without a driver.
 
-import { clamp, smoothstep, makeRng, hash01, angleDelta, damp, m4transformPoint } from '../core/math.js';
+import { clamp, smoothstep, makeRng, hash01, angleDelta, damp, m4transformPoint, m4fromYawPos } from '../core/math.js';
 import { CHANNEL } from '../core/ids.js';
 import { trafficSpec } from '../physics/index.js';
 import { TrafficSim } from './drivers.js';
+import { PatrolDispatch } from './police.js';
+import { buildFootOfficer } from '../vehicles/traffic/officers.js';
 import { comfortSpeed } from './lanes.js';
 import { createVehicleKit, VehicleView } from './vehicleView.js';
 import { writeVehicleLamps, GLOW_ROUND, HEADLAMP_SUN_ELEVATION, HEADLAMP_RAIN } from './lamps.js';
@@ -115,15 +117,25 @@ class TrafficVehicle {
     this.level = -2;
     this.loose = false; // a parked vehicle that has been pushed
     this.lightBar = false; // a patrol car on a call
+    // ---- Paloma PD (a police car only; see game/police.js)
+    /** The light-bar state this car arrived with: the dispatch adds to it, never takes it away. */
+    this.onCall = false;
+    /** Ordered to the incident this frame. */
+    this.responding = false;
+    /** Metres from the player, from the last dispatch scan. */
+    this.range = Infinity;
+    /** The officer that has stepped out of this car, or null. */
+    this.officer = null;
   }
 }
 
 /**
  * @param {{renderer: object, physics: object, graph: import('./lanes.js').LaneGraph|null,
- *          models: object[], seed?: number}} deps
+ *          models: object[], seed?: number, notify?: (text: string) => void}} deps
  *   models: the traffic models (10.1, 15.3); their order is the parked type index
+ *   notify: what the patrol dispatch says to the player (a toast)
  */
-export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
+export function createTraffic({ renderer, physics, graph, models, seed = 1, notify = null }) {
   const sim = graph ? new TrafficSim(graph, { seed }) : null;
   // Without a lane graph or without vehicle types there is nothing to put on the road; the
   // simulation still runs, because its clock times the signals.
@@ -150,7 +162,7 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
   const audible = [];
   const audiblePool = [];
   for (let i = 0; i < AUDIBLE; i++) audiblePool.push({ position: [0, 0, 0], velocity: [0, 0, 0], kind: 'sedan', throttle: 0, id: 0, distance: 0 });
-  const focus = { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, halfLength: 2.1, halfWidth: 1, centreZ: 0, eye: [0, 0, 0], fx: 0, fy: 0, fz: 1 };
+  const focus = { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, halfLength: 2.1, halfWidth: 1, centreZ: 0, eye: [0, 0, 0], fx: 0, fy: 0, fz: 1, vehicle: null };
   const pos = [0, 0, 0];
   const centre = [0, 0, 0];
   let density = 2;
@@ -158,6 +170,133 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
   const nearest = new Array(NEAR_MAX).fill(null), nearKey = new Float64Array(NEAR_MAX);
   let nearCount = 0;
   let nextId = 1;
+
+  // ------------------------------------------------------------------ Paloma PD
+  //
+  // The cruiser models, the roof bar and the road behaviour of a patrol car are the release's
+  // own (traffic type 7, `lightBar` in spawnOn). What follows is the dispatch added on top: it
+  // gives the units it wants at an incident a route over the lane graph, runs their bars, and
+  // puts an officer on the ground next to a stopped car. It never writes a pose and never
+  // creates a body: the drivers keep their junction grants, and an officer walks in the drawn
+  // world only, so nothing here can push traffic or clip through a wall undetected.
+  const policeType = models.findIndex((model) => model.kind === 'police');
+  const police = drivable && policeType >= 0 ? new PatrolDispatch({
+    graph,
+    // A unit is seen when a ray from the camera to it reaches it: buildings, walls and other
+    // cars all block the view, so an incident only escalates where an officer can see it.
+    canSee(unit) {
+      const p = unit.box.renderPos;
+      const dx = p[0] - focus.eye[0], dy = p[1] + 1.25 - focus.eye[1], dz = p[2] - focus.eye[2];
+      const d = Math.hypot(dx, dy, dz);
+      if (d < 3.5) return true;
+      ray.origin[0] = focus.eye[0]; ray.origin[1] = focus.eye[1]; ray.origin[2] = focus.eye[2];
+      ray.direction[0] = dx / d; ray.direction[1] = dy / d; ray.direction[2] = dz / d;
+      const hit = physics.raycast(ray.origin, ray.direction, d - 0.4, focus.vehicle);
+      return !hit.hit || hit.body === unit.box;
+    },
+    routeDriver: (driver, route) => sim.setRoute(driver, route),
+    notify: (text) => { if (notify) notify(text); },
+  }) : null;
+  const ray = { origin: [0, 0, 0], direction: [0, 0, 0] };
+  const officer = { mesh: -1, failed: false, clock: 0 };
+  // An impact is reported by physics, where the contact really happened. It is reported for the
+  // simulated vehicle in it, which is the player's car: so a patrol car being struck is news on
+  // its own, and a crash between the player and anyone else is a violation only where an officer
+  // can see it (which police.impact judges with the last scan).
+  const stopImpact = physics.onImpact ? physics.onImpact((e) => {
+    if (police && e.vehicle === focus.vehicle) police.impact(e.other ? e.other.userData : null, e.speed);
+  }) : null;
+
+  /** The officer mesh, made once on first need: a car that never chases anyone costs nothing. */
+  function officerMesh() {
+    if (officer.failed) return -1;
+    if (officer.mesh < 0) {
+      try {
+        officer.mesh = renderer.createMesh(buildFootOfficer(), { retain: true });
+      } catch (error) {
+        officer.failed = true; // no officers on a renderer that will not take the mesh
+        console.error('Officer mesh could not be uploaded', error);
+        return -1;
+      }
+    }
+    return officer.mesh;
+  }
+
+  function acquireOfficer(unit) {
+    if (unit.officer) return unit.officer;
+    const mesh = officerMesh();
+    if (mesh < 0) return null;
+    const p = unit.box.pos;
+    const obj = renderer.addDynamic({ mesh, castShadow: true });
+    // The VEHICLE shader reads objA as paint and finish and objB.w as the lamp code: an officer
+    // wears no lamps, and every material of the mesh is a fixed one, so both stay neutral.
+    obj.objA[0] = 0.42; obj.objA[1] = 0.48; obj.objA[2] = 0.54;
+    const o = { obj, x: p[0], z: p[2], yaw: unit.box.yaw, walking: 0, at: 0 };
+    unit.officer = o;
+    return o;
+  }
+
+  function releaseOfficer(unit) {
+    const o = unit.officer;
+    if (!o) return;
+    o.obj.remove();
+    unit.officer = null;
+  }
+
+  /**
+   * The officers and the roof bars, once per frame. Officers ride: an officer exists only while
+   * their own car is standing, is within OFFICER_RANGE and has not been shoved out of place, and
+   * `stopped` (the player waiting with a unit after him) is what sends one across to the driver's
+   * door. Otherwise an officer walks back to their own car and is released when they reach it, so
+   * nobody is left standing on a double yellow line chasing a cruiser that has pulled away.
+   */
+  const OFFICER_RANGE = 150, OFFICER_WALK = 1.75, BAR_RANGE = 220;
+  /** Metres: how near the stopped car an officer will set out across. */
+  const OFFICER_DEPLOY = 60;
+  /** Metres: the height of the flat land the streets are drawn at (see game.js). */
+  const LAND_Y = 1.2;
+  function updatePolice(dt, stopped) {
+    const status = police.status;
+    let onFoot = 0;
+    officer.clock += dt;
+    for (const unit of police.units) {
+      const p = unit.box;
+      // Every unit answering, or simply near, an incident runs its bar; one that arrived on a
+      // call keeps it running, which is how the release's own cruisers came onto the road.
+      unit.lightBar = unit.onCall || unit.responding || (status.heat > 0 && unit.range < BAR_RANGE);
+      // Officers ride. They are on the ground only while their own car is standing and while the
+      // one they stopped is close; nobody chases a cruising car on foot across the island.
+      const speed = unit.driver ? unit.driver.v : Math.hypot(p.vel[0], p.vel[2]);
+      if (speed > 2.2 || unit.distance > OFFICER_RANGE || p.pushed || unit.state !== DRIVING) {
+        releaseOfficer(unit);
+        continue;
+      }
+      const out = stopped && unit.distance < OFFICER_DEPLOY;
+      const o = out ? acquireOfficer(unit) : unit.officer;
+      if (!o) continue;
+      const cs = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+      // Local +x is the car's left. At a stop the officer walks out to the player's driver's
+      // door; otherwise they make for the kerb side of their own car, facing along it.
+      const gx = 1.55, gz = -1.15;
+      const idle = !out;
+      const tx = idle ? p.pos[0] - cs * 1.3 : focus.x + cs * gx + sn * gz;
+      const tz = idle ? p.pos[2] + sn * 1.3 : focus.z - sn * gx + cs * gz;
+      const dx = tx - o.x, dz = tz - o.z, d = Math.hypot(dx, dz);
+      const step = OFFICER_WALK * dt;
+      if (idle && d < 0.45) { releaseOfficer(unit); continue; }
+      if (d > 0.02) {
+        o.yaw = idle ? p.yaw : Math.atan2(dx, dz);
+        if (d > step) { o.x += dx / d * step; o.z += dz / d * step; } else { o.x = tx; o.z = tz; }
+      }
+      o.walking = clamp(o.walking + (d > step * 1.5 ? dt * 5 : -dt * 5), 0, 1);
+      // Both feet on the ground: the flat land height, the same the parked cars are put at.
+      const bob = Math.abs(Math.sin(officer.clock * 7.4)) * 0.035 * o.walking;
+      m4fromYawPos(o.obj.matrix, o.yaw, o.x, LAND_Y + bob, o.z, 1);
+      o.at = idle ? 0 : 1 - clamp(d / 12, 0, 1);
+      onFoot++;
+    }
+    status.officers = onFoot;
+  }
 
   function inView(x, y, z) {
     const dx = x - focus.eye[0], dy = y - focus.eye[1], dz = z - focus.eye[2];
@@ -195,6 +334,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
   }
 
   function destroyVehicle(v) {
+    releaseOfficer(v);
+    if (police) police.remove(v);
     if (v.driver) { sim.remove(v.driver); v.driver = null; }
     physics.removeKinematicBox(v.box);
     releaseView(v.type, v.view);
@@ -209,8 +350,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
 
   // ------------------------------------------------------------------ moving vehicles
 
-  function spawnOn(lane, s) {
-    const type = rng.weighted(typeIndices, spawnWeight);
+  function spawnOn(lane, s, forcedType = -1) {
+    const type = forcedType >= 0 ? forcedType : rng.weighted(typeIndices, spawnWeight);
     const shape = shapes[type];
     const speed = Math.min(comfortSpeed(lane, s), lane.speedLimit) * 0.85;
     if (!sim.canPlace(lane, s, shape.frontLength, shape.rearLength, speed)) return false;
@@ -220,9 +361,49 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
     v.driver = driver;
     v.dusk = hash01(driver.seed, 11) < FORGETFUL_SHARE ? FORGETFUL_SUN_ELEVATION : HEADLAMP_SUN_ELEVATION - HEADLAMP_SPREAD * hash01(driver.seed, 9);
     v.lightBar = models[type].kind === 'police' && hash01(driver.seed, 13) < ON_CALL_SHARE;
+    if (police && type === policeType) { v.onCall = v.lightBar; police.add(v); }
     driver.userData = v;
     moving.push(v);
     return true;
+  }
+
+  /**
+   * A patrol car of its own: the traffic mix puts one on the road about once in fifty cars,
+   * which is not a police force. So the streets keep a minimum number of cruisers driving
+   * within PATROL_KEEP of the player, one at low density and two above it, and a car that is
+   * standing down is not retired while it is the last one. They are ordinary traffic in every
+   * other respect: put on a lane through the driver simulation, with a box in physics, and
+   * taken off again by the same rules as any other car.
+   */
+  const PATROL_KEEP = 260;
+  /** None at all with the traffic switched off; one at low density, two above it. */
+  const patrolWanted = () => (density === 0 ? 0 : density >= 2 ? 2 : 1);
+  function patrolCount() {
+    let n = 0;
+    for (const v of moving) if (v.type === policeType) n++;
+    return n;
+  }
+
+  // A cruiser may come onto the beat nearer than ordinary traffic does, because a patrol car down
+  // the road is the thing that makes the police feel present; it still may not arrive in view.
+  const PATROL_NEAR = 95;
+  /** One attempt at a cruiser on a lane of the ring at `angle`, `radius`. */
+  function trySpawnPatrol(angle, radius) {
+    const hit = graph.nearest(focus.x + Math.sin(angle) * radius, focus.z + Math.cos(angle) * radius, SPAWN_SNAP, isRoadLane);
+    if (!hit) return false;
+    if (Math.hypot(hit.x - focus.x, hit.z - focus.z) < PATROL_NEAR) return false;
+    if (inView(hit.x, hit.y + 0.7, hit.z)) return false;
+    return spawnOn(hit.lane, hit.s, policeType);
+  }
+
+  function keepPatrol() {
+    const want = patrolWanted();
+    // A few attempts, not a loop until it works: the ring may be full of cars right now, and the
+    // next step will try again. Closer than ordinary traffic, so that the beat runs past the
+    // player rather than happening somewhere out of sight.
+    for (let i = 0; i < SPAWN_ATTEMPTS * 2 && patrolCount() < want; i++) {
+      if (trySpawnPatrol(rng.range(-Math.PI, Math.PI), rng.range(PATROL_NEAR, 240))) moving[moving.length - 1].shown = 0;
+    }
   }
 
   /** One attempt to put a vehicle on a lane near the ring point at `angle`, `radius`. */
@@ -236,7 +417,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
   }
 
   function spawn() {
-    const want = MOVING_BY_DENSITY[density];
+    // The beat is on top of the traffic target, not inside it.
+    const want = MOVING_BY_DENSITY[density] + patrolWanted();
     if (!drivable || moving.length >= want) return;
     // Mostly ahead of where the player is going, so that the road in front is never empty.
     const speed = Math.hypot(focus.vx, focus.vz);
@@ -246,6 +428,7 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
       // Far ahead a new vehicle may be in view, and at night its lamps are all of it that shows.
       if (trySpawn(angle, rng.range(SPAWN_NEAR, SPAWN_FAR), SPAWN_NEAR, SPAWN_VISIBLE_BEYOND)) moving[moving.length - 1].shown = 0;
     }
+    keepPatrol();
   }
 
   function retire() {
@@ -261,6 +444,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
         else if (v.driver.finished || v.driver.idle > RETIRE_STUCK_SECONDS) gone = !seen && d > 60;
         else gone = !seen && dx * hx + dz * hz < 0;
       }
+      // The last cruiser of the beat stays on the road while it is still worth keeping.
+      if (gone && police && v.type === policeType && d < PATROL_KEEP && v.state === DRIVING && !v.driver.finished && patrolCount() <= 1) gone = false;
       if (gone) {
         destroyVehicle(v);
         removeAt(moving, i);
@@ -392,6 +577,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
 
   const traffic = {
     sim,
+    /** The patrol dispatch, or null where there is no road network (game/police.js). */
+    police,
     /** Number of moving vehicles (wrecks included). */
     get count() { return moving.length; },
     get parkedCount() { return parked.length; },
@@ -404,11 +591,19 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
       if (next === density) return;
       density = next;
       for (const tile of tiles.values()) reconcileTile(tile);
-      // Fewer wanted than exist: the ones furthest from the player go first.
+      if (density === 0 && police) police.reset();
+      // Fewer wanted than exist: the ones furthest from the player go first, the cruisers of the
+      // beat excepted (they are the police minimum, not part of the traffic the setting counts).
       const want = MOVING_BY_DENSITY[density];
       while (moving.length > want) {
-        let far = 0;
-        for (let i = 1; i < moving.length; i++) if (moving[i].distance > moving[far].distance) far = i;
+        const cruisers = patrolCount();
+        let far = -1, best = -Infinity;
+        for (let i = 0; i < moving.length; i++) {
+          const v = moving[i];
+          if (police && v.type === policeType && cruisers <= patrolWanted()) continue;
+          if (v.distance > best) { best = v.distance; far = i; }
+        }
+        if (far < 0) break;
         destroyVehicle(moving[far]);
         removeAt(moving, far);
       }
@@ -450,6 +645,9 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
       focus.halfLength = player.kit.halfExtents[2]; focus.halfWidth = player.kit.halfExtents[0]; focus.centreZ = player.kit.colliderCentre[2];
       focus.eye[0] = camera.position[0]; focus.eye[1] = camera.position[1]; focus.eye[2] = camera.position[2];
       focus.fx = camera.forward[0]; focus.fy = camera.forward[1]; focus.fz = camera.forward[2];
+      // Whose body the sight rays must not be stopped by: the player's own car stands between
+      // the camera and most of what is ahead of it.
+      focus.vehicle = player.vehicle;
     },
 
     /**
@@ -495,6 +693,11 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
      * @param {number} rain          0..1
      */
     update(dt, sunElevation, rain) {
+      if (police) {
+        // What the units are told happens before their lamps are written for this frame.
+        police.step(dt, focus, true);
+        updatePolice(dt, police.status.heat > 0 && Math.hypot(focus.vx, focus.vz) < 2.2);
+      }
       const eye = focus.eye;
       audible.length = 0;
       nearCount = 0;
@@ -566,6 +769,9 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
     },
 
     dispose() {
+      if (stopImpact) stopImpact();
+      if (police) { for (const unit of police.units) releaseOfficer(unit); police.reset(); }
+      if (officer.mesh >= 0) renderer.destroyMesh(officer.mesh);
       traffic.clear();
       for (const key of [...tiles.keys()]) traffic.removeTile(key);
       for (const pool of viewPools) { for (const view of pool) view.dispose(); pool.length = 0; }

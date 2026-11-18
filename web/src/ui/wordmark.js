@@ -5,17 +5,21 @@
 //   ───────           a pink leaning line with a soft glow: the one neon touch
 //    ── ─             two fainter echo stripes under it, the nod to a sunset's bands
 //   PALOMA DRIVE 1986  the tag line in small spaced capitals
+//   PALOMA ENGINE       the renderer underneath, named (src/render/identity.js)
 
 import { el } from './dom.js';
+import { ENGINE } from '../render/identity.js';
 
 export const TAG_LINE = 'Paloma Drive \u00b7 1986';
+export const ENGINE_LINE = `${ENGINE.name} \u00b7 ${ENGINE.api}`;
 
 export function wordmark(doc, className = '') {
   const root = el(doc, 'div', `wordmark ${className}`.trim(),
     el(doc, 'div', 'wordmark__title', el(doc, 'span', 'wordmark__word', 'VICE'), el(doc, 'span', 'wordmark__year', '\u201986')),
     el(doc, 'div', 'wordmark__line'),
     el(doc, 'div', 'wordmark__stripes', el(doc, 'i', ''), el(doc, 'i', '')),
-    el(doc, 'div', 'wordmark__tag', TAG_LINE));
+    el(doc, 'div', 'wordmark__tag', TAG_LINE),
+    el(doc, 'div', 'wordmark__engine', ENGINE_LINE));
   root.setAttribute('role', 'img');
   root.setAttribute('aria-label', "VICE '86");
   return root;

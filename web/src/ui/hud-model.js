@@ -154,7 +154,23 @@ export function createHudModel() {
     districtOn: false,
     districtUntil: 0,
     north: 0,            // degrees
+    police: '',          // what the dispatch is doing about the player, one line
+    policeHeat: 0,       // 0..3: how many pips are lit
   };
+}
+
+/** A patrol siren is held in place while it means something, so no timer is kept here. */
+function policeLine(pd) {
+  if (!pd) return '';
+  if (pd.heat) {
+    const mode = pd.mode === 'search' ? 'searching' : pd.nearby ? 'pull over' : 'pursuit';
+    const units = Math.max(1, pd.responding | 0);
+    return `units ${units}${pd.officers ? ' · officers out' : ''} · ${mode}`;
+  }
+  // The end of an incident is worth reading: the dispatch says so for a few seconds.
+  if (pd.mode === 'cleared') return 'traffic stop complete';
+  if (pd.mode === 'escaped') return 'search called off';
+  return '';
 }
 
 /**
@@ -195,6 +211,11 @@ export function updateHudModel(model, input, units, now) {
   model.nitrous = nitrousStep(input.nitrous);
   model.boosting = Boolean(input.boosting);
   if (typeof input.heading === 'number') model.north = northRotation(input.heading);
+
+  // Paloma PD: one line under the clock. The dispatch object is updated in place, so it is read
+  // here and nowhere else in the UI.
+  model.police = policeLine(input.police);
+  model.policeHeat = input.police ? Math.max(0, Math.min(3, input.police.heat | 0)) : 0;
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

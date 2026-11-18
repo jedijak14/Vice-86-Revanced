@@ -8,6 +8,7 @@
 
 import { el } from './dom.js';
 import { actionRow, optionRow, noteRow, segmentRow } from './controls.js';
+import { ENGINE } from '../render/identity.js';
 import { SCHEMA, TIME_OPTIONS, WEATHER_OPTIONS, fieldOf, formatValue, hasMenuRow } from './settings.js';
 
 // ---------------------------------------------------------------- controls reference
@@ -168,6 +169,8 @@ const PRESET_LABEL = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra
 export function describeDevice(info, currentPreset) {
   if (!info) return ['Graphics device not reported', 'Auto uses Medium until the device has been identified.'];
   const chosen = PRESET_LABEL[info.autoPreset || info.preset] || 'Medium';
+  // The engine is named first: it is what the rest of these lines describe the work of.
+  info = { ...info, label: `${ENGINE.name} \u00b7 ${info.label || 'Unknown graphics device'}` };
   const basis = info.refined ? 'confirmed by measured frame times' : 'estimated from the hardware, to be checked against measured frame times';
   const verb = currentPreset === 'auto' ? 'Auto is using' : 'Auto would use';
   const lines = [info.label || 'Unknown graphics device', `${verb} ${chosen}: ${basis}.`];

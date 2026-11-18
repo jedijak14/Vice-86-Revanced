@@ -6,6 +6,7 @@
 
 import { createDsp } from './dsp/index.js';
 import { createHost } from './host.js';
+import { createSiren } from './siren.js';
 import { readVec3, panOf, distanceGain, dopplerRatio, TrafficMatcher } from './spatial.js';
 
 const K = createDsp();
@@ -47,10 +48,10 @@ export function createAudio(options = {}) {
       host.setMaster(volumes.master);
       state[P.EFFECTS] = volumes.effects;
     },
-    update, setCar, garage, impact, horn, thunder, ui, afterfire,
+    update, setCar, garage, impact, horn, thunder, ui, afterfire, siren,
     suspend() { host.suspend(); },
     resume() { host.resume(); },
-    dispose() { host.dispose(); },
+    dispose() { if (sirenVoice) { sirenVoice.dispose(); sirenVoice = null; } host.dispose(); },
   };
 
   /**
@@ -158,6 +159,28 @@ export function createAudio(options = {}) {
   function ui(kind) { host.postEvent(EV.UI, K.uiCode(kind)); }
   /** Exhaust pops and bangs, scaled by strength 0..1 (lift-off, up-shifts, nitrous cut). */
   function afterfire(strength) { host.postEvent(EV.AFTERFIRE, clamp01(strength === undefined ? 0.6 : strength)); }
+
+  /**
+   * A patrol car's wail: level 0..1, and the world position it comes from (without one it is
+   * simply "somewhere in the distance", which is what the dispatch reports when no unit is near).
+   * Nothing of it is built before the level is asked for and nothing is kept once it is silent,
+   * so a street with no police in it runs no extra nodes.
+   */
+  let sirenVoice = null;
+  function siren(level, position) {
+    const want = clamp01(num(level, 0));
+    if (want < 0.01) {
+      if (sirenVoice) { sirenVoice.dispose(); sirenVoice = null; }
+      return;
+    }
+    if (!sirenVoice) {
+      if (!host.ready || !host.context || !host.output || typeof host.context.createOscillator !== 'function') return;
+      try { sirenVoice = createSiren(host.context, host.output); } catch (error) { return; }
+    }
+    let pan = 0;
+    if (position) { readVec3(position, pos); pan = panOf(listenerPos, listenerFwd, pos); }
+    sirenVoice.update(want, pan);
+  }
 
   return audio;
 }

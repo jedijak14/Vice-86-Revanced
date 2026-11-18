@@ -19,6 +19,8 @@ export function createHudFeed({ ui, world }) {
   const values = {
     speed: 0, rpm: 0, redline: 1, gear: 1, headlamps: false, handbrake: false, clock: 0,
     district: '', heading: 0, position: [0, 0, 0], nitrous: 1, boosting: false,
+    /** The patrol dispatch's status object, read in place by the HUD's view model (may be null). */
+    police: null,
   };
   let districtTimer = 0;
   let metres = MAP_METRES;
@@ -45,8 +47,9 @@ export function createHudFeed({ ui, world }) {
      * @param {number} hours    time of day
      * @param {number} handbrake  0..1 as applied
      * @param {{level: number, boosting: boolean}} nitrous
+     * @param {object|null} police  the patrol dispatch's status (game/police.js)
      */
-    update(dt, player, hours, handbrake, nitrous) {
+    update(dt, player, hours, handbrake, nitrous, police) {
       const vehicle = player.vehicle;
       values.speed = Math.abs(vehicle.speed);
       values.rpm = vehicle.rpm;
@@ -59,6 +62,7 @@ export function createHudFeed({ ui, world }) {
       values.position[0] = player.pos[0]; values.position[1] = player.pos[1]; values.position[2] = player.pos[2];
       values.nitrous = nitrous.level;
       values.boosting = nitrous.boosting;
+      values.police = police || null;
       districtTimer -= dt;
       if (districtTimer <= 0) {
         districtTimer = DISTRICT_INTERVAL;
