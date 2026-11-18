@@ -31,6 +31,8 @@ const SPAWN_SNAP = 45; // a ring point is moved to the nearest lane within this 
 const SPAWN_ATTEMPTS = 3; // per simulation step
 const POPULATE_NEAR = 38, POPULATE_FAR = 300;
 const RETIRE_FAR = 390;
+/** Metres from a start line within which an ordinary car is close enough to be racing. */
+const RECRUIT_RADIUS = 260;
 const RETIRE_BEHIND = 190;
 const RETIRE_STUCK_SECONDS = 100; // a vehicle that has stood this long is removed when unseen
 const VIEW_COS = 0.5; // cosine of the half-angle that counts as "in view" (a little over the widest field of view)
@@ -701,7 +703,15 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
      * simulated twice. (game/races.js)
      * @returns {object[]} one record per car that was actually placed, `{ car, driver, box, view }`
      */
-    fieldForRace(lane, s, count, route) {
+    /**
+     * Hand a race the field it wants.
+     * @param {object} lane   the lane the start line sits on
+     * @param {number} s      its arc position, where the player is standing
+     * @param {number} count  how many rivals the tier asks for
+     * @param {object} map    the course order, for sim.setRoute
+     * @param {object} [opts] { from: [x, z] the line, lanes: Set of lane ids the course uses }
+     */
+    fieldForRace(lane, s, count, map, opts = {}) {
       const cars = [];
       // A street grid: cars go in front of the line first, since those are the ones you can see and
       // overtake, then behind it. `canPlace` refuses a spot somebody is already occupying, so a slot
@@ -715,10 +725,37 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
         if (!spawnOn(lane, want, -1)) continue;
         const v = moving[moving.length - 1];
         if (v && v.driver) {
-          if (route) sim.setRoute(v.driver, route);
+          if (map) sim.setRoute(v.driver, map);
           // Only the vehicle and its driver are handed out: the box and the view are the traffic pool's
           // to take back, and a car that falls behind the field is retired like any other (races.js reads
           // `car.driver` to tell a live opponent from a parked one).
+          v.raced = true;
+          cars.push({ car: v, driver: v.driver });
+        }
+      }
+      // A borrowed field, when the kerbside is empty: the cars already out on the course *are* the
+      // race, and a street race that turns up alone is not a race. These need no spawn at all, which is
+      // why they work in a small streamed neighbourhood where the slot above is occupied or off-lane —
+      // and they are taken as they come, since who happens to be driving this road is the whole point of
+      // racing on one. The order is what makes them rivals; the physics was never asked to move anybody.
+      if (cars.length < count) {
+        const from = opts.from || null, onCourse = opts.lanes || null;
+        const picked = [];
+        for (let i = 0; i < moving.length; i++) {
+          const v = moving[i];
+          if (!v.driver || v.raced || v.state !== DRIVING || policeTypes.has(v.type)) continue;
+          const p = v.box.pos;
+          const d = from ? Math.hypot(p[0] - from[0], p[2] - from[1]) : 0;
+          if (d > RECRUIT_RADIUS) continue;
+          // Somebody already driving the course first, then whoever is closest to the line: both are a
+          // car that was going this way anyway, which is what a street race is made of.
+          const on = onCourse && v.driver.lane && onCourse.has(v.driver.lane.id) ? 0 : 1;
+          picked.push({ v, d, rank: on * 1e4 + d });
+        }
+        picked.sort((a, b) => a.rank - b.rank);
+        for (let i = 0; i < picked.length && cars.length < count; i++) {
+          const v = picked[i].v;
+          if (map) sim.setRoute(v.driver, map);
           v.raced = true;
           cars.push({ car: v, driver: v.driver });
         }

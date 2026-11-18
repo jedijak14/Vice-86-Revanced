@@ -55,9 +55,12 @@ function fakeRenderer() {
 /** Traffic that hands over cars and takes them back, which is all a race asks of it. */
 function fakeTraffic({ graph, count = 2 } = {}) {
   const field = [], released = [];
+  let asked = null;            // what the race told the street about where the line is
   return {
     field, released,
-    fieldForRace(lane, s, wanted, route) {
+    get asked() { return asked; },
+    fieldForRace(lane, s, wanted, route, opts) {
+      asked = opts || null;
       for (let i = 0; i < wanted; i++) {
         const driver = { lane, s: s - 14 * i, v: 0, patrolRoute: null, finished: false };
         const car = { driver, box: { pos: [lane.pts[0] - 30 * i, 1.2, lane.pts[2]], yaw: 0 }, raced: true };
@@ -353,6 +356,10 @@ test('the cars handed to a race are given back to the street', () => {
   assert.ok(races.start('county', start[0], start[1]), 'could not start the county meeting');
   assert.ok(traffic.field.length >= 1, 'no opponents were placed');
   assert.ok(traffic.field.every((car) => car.driver.route), 'an opponent was left without the course');
+  // A field cannot be filled from the street without being told where the street is: the line's own
+  // position and the lanes the course uses are what traffic.js recruits with (see fieldForRace).
+  assert.ok(traffic.asked && traffic.asked.from, 'the race never told traffic where the line is');
+  assert.ok(traffic.asked.lanes && traffic.asked.lanes.size >= 2, 'the race never said which lanes it runs on');
   assert.ok(races.snapshot().opponents >= 2, 'the field is only you');
   assert.ok(renderer.objects.length >= 3, 'the course has no gates drawn');
   for (const o of renderer.objects) assert.ok(o.matrix[12] !== 0 || o.matrix[14] !== 0, 'a gate was put at the origin');

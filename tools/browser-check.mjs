@@ -62,6 +62,7 @@ const log = (...a) => console.log(`+${((Date.now() - t0) / 1000).toFixed(1)}s`, 
 const browser = await chromium.launch({ executablePath, args: ARGS });
 const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
 const errors = [], warnings = [], failedRequests = [], badResponses = [];
+let raceStarted = false;        // so a board with nobody on it can be complained about at the end
 page.on('pageerror', (e) => errors.push(`pageerror: ${e && e.stack ? String(e.stack).split('\n').slice(0, 2).join(' | ') : e}`));
 page.on('console', (m) => {
   const text = `${m.type()}: ${m.text()}`;
@@ -107,7 +108,7 @@ const read = () => page.evaluate(() => {
     hudStarTotal: document.querySelectorAll('.hud__star').length,
     hudRow: row ? row.textContent.trim() : '',
     hudRows: [...document.querySelectorAll('.hud__row')].filter((e) => e.classList.contains('is-on')).length,
-    race: board ? { active: board.active, finished: board.finished, gates: board.total, passed: board.passed, ms: board.elapsedMs, name: board.name, offer: race.offer ? race.offer.tier.name : null } : null,
+    race: board ? { active: board.active, finished: board.finished, gates: board.total, passed: board.passed, ms: board.elapsedMs, name: board.name, field: board.field, running: board.running, offer: race.offer ? race.offer.tier.name : null } : null,
   };
 });
 
@@ -142,6 +143,7 @@ while (Date.now() < deadline && reached) {
     if (offer) {
       raced = true;
       log('starting a street race:', offer.tier && offer.tier.name);
+      raceStarted = true;
       await page.evaluate((tier) => window.__vice.startRace(tier), (offer.tier && offer.tier.id) || 'local');
     } else if (since0 > 150_000) {
       raced = true;
@@ -151,7 +153,7 @@ while (Date.now() < deadline && reached) {
   if (raced && !raceRead && since0 > 150_000) {
     raceRead = true;
     const b = await page.evaluate(() => window.__vice.race().board);
-    log('race board', JSON.stringify({ active: b.active, gates: b.total, passed: b.passed, place: b.place, of: b.field, ms: Math.round(b.elapsedMs), next: b.toNext }));
+    log('race board', JSON.stringify({ active: b.active, gates: b.total, passed: b.passed, place: b.place, of: b.field, run: b.running, ms: Math.round(b.elapsedMs), next: b.toNext }));
     if (!b.active && !b.finished) errors.push('the race stopped being a race');
     await page.evaluate(() => window.__vice.abortRace());
   }
@@ -187,6 +189,7 @@ if (final) {
   if (driveOn && final.crowd && final.crowd.peds > 4 && final.crowd.articulated === 0) warnings.push(`nobody has limbs (${JSON.stringify(final.crowd)})`);
   if (final.crowd && final.crowd.streets === 0) warnings.push('the crowd found no street to walk on');
   if (final.wanted && final.wanted.stars > 0 && final.hudStars === 0 && minutes >= 1) warnings.push(`the ledger says ${final.wanted.stars} stars and the HUD shows none`);
+  if (raceStarted && final.race && final.race.field === 1) warnings.push('the race started with no opponents on the grid');
   if (final.hudStarTotal !== 5 && final.hudStarTotal !== 0) warnings.push(`the HUD built ${final.hudStarTotal} star slots`);
   log('peak heat', peak, '| officers out at some point:', officers);
   try {

@@ -345,7 +345,15 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
       times = [];
       showGates();
       // The opponents: traffic cars on the grid behind the line, told to follow the course.
-      cars = traffic.fieldForRace ? traffic.fieldForRace(route.start.lane, route.start.s, tier.opponents, route.map) : [];
+      // The line's own position and the lanes the course uses, because the field is filled from the
+      // street as it stands: cars are recruited where they are, not conjured onto a kerb (traffic.js).
+      const line = route.gates[0];
+      cars = traffic.fieldForRace
+        ? traffic.fieldForRace(route.start.lane, route.start.s, tier.opponents, route.map, {
+          from: line ? [line.x, line.z] : null,
+          lanes: new Set(route.lanes.map((l) => l.id)),
+        })
+        : [];
       state.field = state.opponents = (cars ? cars.length : 0) + 1;
       // On the line, and no further: the caller has just put the car there (place()). Starting exactly
       // on the plane is deliberate — a car 12 m back would count a crossing of its own start line as a
