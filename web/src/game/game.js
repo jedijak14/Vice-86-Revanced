@@ -232,7 +232,7 @@ export function createGame(deps) {
   let waterTime = 0;
   let surroundingsTimer = 0;
   let hornOn = false;
-  let physicsMs = 0, gameMs = 0;
+  let physicsMs = 0, gameMs = 0, streetSeconds = 0;
   let cameraDistance = 6;
   let wasMeasuring = tuner ? tuner.measuring : false;
   // Changing the car: the id asked for last, and the promise of the change in progress.
@@ -985,6 +985,7 @@ export function createGame(deps) {
       return Object.assign(statsOut, renderer.stats, {
         physicsMs, gameMs, car: carId, traffic: traffic.count, parked: traffic.parkedCount,
         tilesLoaded: w.tilesLoaded || 0, tilesPending: w.tilesPending || 0, workerMs: w.workerMs || 0,
+        streetSeconds: Math.round(streetSeconds * 100) / 100,
       });
     },
 
@@ -1032,6 +1033,12 @@ export function createGame(deps) {
       // down rather than spiral (loop.js), so this is less than `simDt`: anything that measures a
       // rate against what the cars are doing — the dispatch, an officer's walk — belongs to it.
       const stepTime = steps * FIXED_DT;
+      // How much simulated time the street has been granted since the game started. Everything that
+      // measures a rate — a race's clock, a pedestrian's think time, the stars cooling off — runs on
+      // this and not on the wall, so a soak that is starving the frame loop shows up here first. It is
+      // reported in stats() for exactly that reason: "the countdown never moved" means something quite
+      // different when the street got 4 seconds of clock in a minute of wall time.
+      streetSeconds += stepTime;
       if (simDt > 0) {
         const p0 = now();
         if (steps > 0 && !inGarage) {

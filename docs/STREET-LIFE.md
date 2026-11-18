@@ -66,5 +66,18 @@ and the crew; `tools/browser-check.mjs` reads both the ledger and the DOM and wa
 
 The page check is what found the two bugs the unit tests could not: a route that could not cross a
 junction (no race was ever offered on the real island, while every graph-level test passed) and the
-HUD's unset fields. Under SwiftShader a soak runs at 5–15 fps, so driving-dependent behaviour needs
-`--drive=1` — inputs land every 1.5 s of wall time otherwise, and a parked car is the normal case.
+HUD's unset fields.
+
+**What a soak in this sandbox can and cannot prove.** The frame loop is paced, and under a software
+rasteriser it hands the game almost nothing: one measured run of 174 wall seconds left
+`stats.streetSeconds` at **0.08 s** — one paced frame's worth of simulated street. Everything on the
+street that measures a *rate* — the countdown, the wanted record cooling off, a pedestrian's walk cycle,
+a race crediting a gate — therefore appears frozen, and reports of the form `articulated: 0`,
+`wanted.since: 0`, `countdown: 3.4` are that, not defects. The check says so in one line
+(`this machine gave the street Xs of simulated time in Ys of wall`) rather than letting each symptom
+generate its own complaint, and only complains about a stuck countdown when the street *did* have clock
+to spend.
+
+So: the page proves the wiring — meshes upload, a course is laid from a kerb, gates are placed, rivals
+are recruited from the traffic, HUD rows light and agree with the ledger it was fed from. The rules are
+owned by `node --test`, where the same 400 steps cost a millisecond.

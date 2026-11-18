@@ -57,12 +57,15 @@ const ARGS = [
 ];
 
 const t0 = Date.now();
+let wallSeconds = 0;            // real time the page was live, for the street-clock comparison above
 const log = (...a) => console.log(`+${((Date.now() - t0) / 1000).toFixed(1)}s`, ...a);
 
 const browser = await chromium.launch({ executablePath, args: ARGS });
 const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
 const errors = [], warnings = [], failedRequests = [], badResponses = [];
 let raceStarted = false;        // so a board with nobody on it can be complained about at the end
+let lastRaceBoard = null, raceSeenOnce = false;
+let raceTimedButScoredNothing = false;   // and so can one that is running but crediting nothing
 page.on('pageerror', (e) => errors.push(`pageerror: ${e && e.stack ? String(e.stack).split('\n').slice(0, 2).join(' | ') : e}`));
 page.on('console', (m) => {
   const text = `${m.type()}: ${m.text()}`;
@@ -98,7 +101,7 @@ const read = () => page.evaluate(() => {
       return out;
     }, {}),
     engineLine: (() => { const n = document.querySelector('.wordmark__engine'); return n ? n.textContent.trim() : null; })(),
-    stats: { fps: s.fps, traffic: s.traffic, parked: s.parked, tiles: s.tilesLoaded, pending: s.tilesPending },
+    stats: { fps: s.fps, traffic: s.traffic, parked: s.parked, tiles: s.tilesLoaded, pending: s.tilesPending, street: s.streetSeconds },
     gpu: s.renderer || s.gpu || null,
     // The street's own population and the record, both read from the game rather than the DOM, plus
     // what the HUD actually rendered: a row that never lights up is a feature that does not exist.
@@ -128,6 +131,7 @@ let since0 = 0;
 const deadline = t0 + minutes * 60_000;
 while (Date.now() < deadline && reached) {
   const s = await read();
+  wallSeconds = (Date.now() - t0) / 1000;
   const p = s.police;
   if (p) {
     peak = Math.max(peak, p.heat);
@@ -150,12 +154,22 @@ while (Date.now() < deadline && reached) {
       errors.push('the street never offered a race from the kerb');
     }
   }
-  if (raced && !raceRead && since0 > 150_000) {
+  // While a race is live the board is read every poll: one sample at an arbitrary moment cannot tell a
+  // clock that is running from a meeting that is stuck on its countdown, and a stuck countdown is exactly
+  // what a single "active: true" looks like from the outside.
+  if (raced && since0 > 150_000 && (raceRead || !raceSeenOnce)) raceSeenOnce = true;
+  if (raced && since0 > 150_000) {
     raceRead = true;
     const b = await page.evaluate(() => window.__vice.race().board);
-    log('race board', JSON.stringify({ active: b.active, gates: b.total, passed: b.passed, place: b.place, of: b.field, run: b.running, ms: Math.round(b.elapsedMs), next: b.toNext }));
-    if (!b.active && !b.finished) errors.push('the race stopped being a race');
-    await page.evaluate(() => window.__vice.abortRace());
+    log('race board', JSON.stringify({ active: b.active, cd: Math.round(b.countdown * 10) / 10, gates: b.total, passed: b.passed, place: b.place, of: b.field, run: b.running, ms: Math.round(b.elapsedMs), next: b.toNext, last: b.last }));
+    if (b.active && b.ms > 8000 && !b.passed) raceTimedButScoredNothing = true;
+    if (!b.active && !b.finished && !raceRead) errors.push('the race stopped being a race');
+    log('street clock', `wall ${Math.round(since0 / 1000)}s`);
+    if (b.active) lastRaceBoard = b;
+    else if (lastRaceBoard && lastRaceBoard.active && lastRaceBoard.ms > 8000 && !lastRaceBoard.passed) {
+      errors.push(`the race ran for ${Math.round(lastRaceBoard.ms / 1000) + 's and credited nothing'}`);
+    }
+    if (!b.active) { await page.evaluate(() => window.__vice.abortRace()); raceRead = 'done'; }
   }
   if (!ordered && heat > 0 && Date.now() - t0 > 60_000) {
     ordered = true;
@@ -189,6 +203,22 @@ if (final) {
   if (driveOn && final.crowd && final.crowd.peds > 4 && final.crowd.articulated === 0) warnings.push(`nobody has limbs (${JSON.stringify(final.crowd)})`);
   if (final.crowd && final.crowd.streets === 0) warnings.push('the crowd found no street to walk on');
   if (final.wanted && final.wanted.stars > 0 && final.hudStars === 0 && minutes >= 1) warnings.push(`the ledger says ${final.wanted.stars} stars and the HUD shows none`);
+  if (raceTimedButScoredNothing) warnings.push('the race clock ran but no gate was ever credited');
+  // The clock first, because almost everything else on this list depends on it. `frame()` is paced, and
+  // under a software rasteriser the pacer hands the game very few frames: the street then gets a trickle
+  // of simulated time while the wall keeps moving. A countdown that never falls, a crowd with no limbs,
+  // a wanted record that never cools and a race that credits no gate are all the same finding, and it is
+  // about this machine rather than the game — so it is said here, in one line, before the rest are
+  // complained about separately.
+  const street = (final.stats && final.stats.street) || 0;
+  if (reached && wallSeconds > 60 && street < wallSeconds * 0.2) {
+    warnings.push(`this machine gave the street ${street.toFixed(1)}s of simulated time in ${Math.round(wallSeconds)}s of wall`
+      + ' — rates (countdowns, cool-off, walk cycles, gate timing) cannot be measured here; prove them in node --test');
+  }
+  if (lastRaceBoard && lastRaceBoard.active && lastRaceBoard.cd > 0.2 && street > 30) {
+    warnings.push(`the meeting never got off its countdown (${lastRaceBoard.cd}s left) with ${street.toFixed(0)}s of street clock`
+      + ' — the countdown is not being stepped');
+  }
   if (raceStarted && final.race && final.race.field === 1) warnings.push('the race started with no opponents on the grid');
   if (final.hudStarTotal !== 5 && final.hudStarTotal !== 0) warnings.push(`the HUD built ${final.hudStarTotal} star slots`);
   log('peak heat', peak, '| officers out at some point:', officers);

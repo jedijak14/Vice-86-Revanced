@@ -537,6 +537,9 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
         toNext: state.active ? nextDistance() : 0,
         place: state.place, field: state.field, lastMs: state.lastMs, bestMs: (readBest(store, state.tier) || {}).ms || state.bestMs,
         opponents: state.opponents, running: state.running, length: Math.round(state.distance),
+        // Why a street would not lay a course, or why this one ended: 'no road', 'no course', ''. A
+        // script that sees a race with no gates passed needs this, not a guess.
+        last: state.last,
       };
     },
   };
