@@ -49,6 +49,9 @@ const executablePath = opt('chromium', process.env.CHROMIUM_PATH || '/tmp/chromi
 const shot = opt('shot', '/tmp/vice-police.png');
 /** Raw extra query parameters, for flags the harness has no option of its own for: --query=webgl2=force */
 const query = opt('query', '');
+/** Put the street at an hour of its own before the soak: `--time=night` is how a lighting pass sees what the
+ *  city does after ten o'clock without waiting an hour for the clock to get there. */
+const hourWanted = opt('time', '');
 const require = createRequire(import.meta.url);
 const pwPath = opt('playwright', process.env.PLAYWRIGHT_PATH || '/tmp/vice-browser-tools/node_modules/playwright-core');
 const { chromium } = require(pwPath);
@@ -127,6 +130,16 @@ try {
   reached = true;
 } catch {
   errors.push('the game never reached the driving phase');
+}
+
+if (reached && hourWanted) {
+  const moved = await page.evaluate((name) => {
+    if (!window.__vice || !window.__vice.setTime) return null;
+    const ok = window.__vice.setTime(name);
+    const s = window.__vice.shop ? window.__vice.shop() : null;      // the shop report carries the hour
+    return { ok, hour: s ? s.hour : null };
+  }, hourWanted);
+  log('time', `--time=${hourWanted}: ${moved && moved.hour !== null ? `the street is at ${moved.hour.toFixed(1)} h` : `the hour did not move (${JSON.stringify(moved)})`}`);
 }
 
 let peak = 0, officers = 0, ordered = false, last = '';
