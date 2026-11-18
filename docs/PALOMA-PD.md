@@ -112,3 +112,5 @@ that the units exist, that an ordered incident finds witnesses, that `2/2` are a
 line and its pips light up with them — and it never waits for a car to drive anywhere. That the cars
 actually drive, reach the sighting and hand the order back when the stop is over is the Node case's
 job, which runs the same driver model in milliseconds.
+
+![The headless check, mid-incident: two units answering, the HUD line lit, Southpoint Beach at 19:36](paloma-pd-check.png)
