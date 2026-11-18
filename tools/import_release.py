@@ -48,7 +48,12 @@ def dependencies(path, body):
     result = set()
     # Some wasm-bindgen builds use a bare filename in new URL(..., import.meta.url).
     url_files = re.findall(r'''new\s+URL\(\s*['"]([\w.-]+\.wasm)['"]\s*,\s*import\.meta\.url''', source)
-    for specifier in [*(m[2] for m in REFERENCE.finditer(source)), *url_files]:
+    references = [m[2] for m in REFERENCE.finditer(source)]
+    if path == PREFIX + 'vendor/rapier/rapier.mjs':
+        # This is the bundled compat build. Its WebAssembly binding table
+        # contains './rapier_wasm3d_bg.js' as a *key*, not a module import.
+        references = [ref for ref in references if ref != './rapier_wasm3d_bg.js']
+    for specifier in [*references, *url_files]:
         resolved = urlsplit(urljoin(ORIGIN + path, specifier))
         name = resolved.path.lstrip('/')
         if resolved.netloc != urlsplit(ORIGIN).netloc or not name.startswith(PREFIX):
@@ -84,7 +89,7 @@ def download(path):
 
 def collect(root, read=download):
     """Copy the transitive closure and keep the upstream bytes untouched."""
-    pending, done = {STYLE, ENTRY}, {}
+    pending, done = {STYLE, ENTRY, PREFIX + 'vendor/rapier/LICENSE'}, {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as workers:
         while pending:
             batch = sorted(pending - done.keys())
