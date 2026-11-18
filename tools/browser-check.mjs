@@ -141,6 +141,25 @@ try {
 } catch {
   errors.push('the game never reached the driving phase');
 }
+// The phase is 'driving' before the page is a game: the renderer compiles its shader programs the first
+// time it needs them, and under a software GL that is a minute or two of tens of programs, during which the
+// boot loop is drawing a loading screen and `game.frame` is not being asked at all. A soak started there
+// measures a page that is still warming up — three quarters of the "the walker never moved" reports in this
+// repo's history were that, not the walker. `hooks.ready` is the game's own word for "the first frame of the
+// street is on screen", so the check waits for it. On real hardware the browser caches the compiled shaders
+// and this is a cost of the first load only.
+if (reached) {
+  const warm = Date.now();
+  let ready = true;
+  try {
+    await page.waitForFunction(() => window.__vice && window.__vice.hooks && window.__vice.hooks.ready === true, null, { timeout: 300_000, polling: 500 });
+  } catch {
+    ready = false;
+  }
+  const took = ((Date.now() - warm) / 1000).toFixed(1);
+  log('boot', ready ? `the street was on screen after ${took}s of shader warm-up` : `shaders were still compiling after ${took}s: this run measures a warming page`);
+  if (!ready) warnings.push(`the game never reported a first settled frame (hooks.ready false after ${took}s)`);
+}
 
 if (reached && hourWanted) {
   const moved = await page.evaluate((name) => {
