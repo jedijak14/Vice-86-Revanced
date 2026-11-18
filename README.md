@@ -4,6 +4,23 @@ A fork of **VICE '86 — Paloma Drive**, the 1986 driving game that ships at
 <https://heat.pplx.app/>, with **Paloma PD** built on top of it: uniformed officers, patrol cars
 that work a beat, witnessed violations, pursuits, searches and traffic stops.
 
+## Play it
+
+**<https://vice-86-revanced.vercel.app>** — the game as this branch has it, no install and no build
+step. Vercel is pointed at this repository with `web/` as the root directory and the build and install
+commands emptied out, because `web/` is already the game: ES modules and static assets, so what ships is
+what is in the tree, vendored GLBs included. A push to `main` redeploys production; a push to any other
+branch gets its own preview URL.
+
+The knobs worth knowing on a phone or a tablet, all in the address bar:
+
+| URL | What it does |
+| --- | --- |
+| `?memory=low` | the low-memory budget — smaller texture atlas, shorter streaming rings, tighter light and particle buffers, no reflections or motion blur. A 3 GB iPad picks this by itself; this forces it |
+| `?quality=ultraLow` | half resolution, no cascades, 128 particles: the rung below Low, for the weakest GPU on the list |
+| `?webgl2=force` | ask the driver for WebGL2 again with softer context attributes instead of refusing to start |
+| `?traffic=0&heat=0` | an empty, quiet street, for when the device is the only thing on it |
+
 Nothing here is a rewrite. The game's own WebGL 2 renderer, physics, procedural models, world
 streaming, audio and UI are the shipped release, checked into this branch file for file; the police
 are added to that code, in that code's style, using its own renderer, lane graph and physics world.
@@ -16,8 +33,9 @@ mapping — no Three.js, no Babylon, no post-processing library). In this fork i
 
 > **Paloma Engine** — WebGL 2, deferred, release `9d646599b896`.
 
-It is stated in `web/src/render/identity.js`, on the title treatment under the wordmark, on the
-Settings ▸ Graphics device note, and to scripts as `window.__vice.engine` / `renderer.engine`.
+It is stated in `web/src/render/identity.js` and to scripts as `window.__vice.engine` /
+`renderer.engine`, where a person diagnosing a fault will find it. It is deliberately *not* printed over
+the title: a wordmark is the game's face, not a place for credits.
 
 ## What was added for the police
 

@@ -243,8 +243,14 @@ if (footOn && reached) {
     const after = spot(walked);
     const metres = before && after ? Math.hypot(after[0] - before[0], after[1] - before[1]) : 0;
     const f = walked.foot || {};
-    log('foot', `ran ${metres.toFixed(1)} m · state ${f.state} · stamina ${Math.round((f.stamina || 0) * 100)}% · body ${f.body ? 'drawn' : 'none'} · near ${f.near === null || f.near === undefined ? 'nothing' : `${f.near} m`}`);
-    if (!(metres > 2)) errors.push('foot: ' + (`the walker covered ${metres.toFixed(2)} m of ground in fifteen seconds of running: the feet do not move the man`));
+    // Judged against the street's clock, not the wall's: on a software renderer the sim is given a fraction
+    // of each frame (game/loop.js refuses to teleport the world after a stall), so fifteen seconds of wall
+    // time here can be half a second of walking. Distance per *simulated* second is the honest measure.
+    const simSeconds = Math.max(0, (walked.streetSeconds || 0) - (out.streetSeconds || 0));
+    const pace = simSeconds > 0 ? metres / simSeconds : 0;
+    log('foot', `ran ${metres.toFixed(2)} m in ${simSeconds.toFixed(2)} s of street time (${pace.toFixed(2)} m/s) · state ${f.state} · stamina ${Math.round((f.stamina || 0) * 100)}% · body ${f.body ? 'drawn' : 'none'} · near ${f.near === null || f.near === undefined ? 'nothing' : `${f.near} m`}`);
+    if (simSeconds < 0.3) warnings.push(`the street gave the walker only ${simSeconds.toFixed(2)} s of clock, which is too little to measure a pace on`);
+    else if (!(pace > 0.9)) errors.push('foot: ' + (`the walker covered ${metres.toFixed(2)} m in ${simSeconds.toFixed(2)} s of running (${pace.toFixed(2)} m/s): the feet do not move the man`));
     // The trigger, held: the gun's own cooldown is what sets the pace, until the magazine is gone.
     await page.evaluate(() => window.__vice.input({ handbrake: 1 }));
     for (let i = 0; i < 6; i++) await page.waitForTimeout(1_500);
@@ -280,9 +286,8 @@ if (footOn && reached) {
       log('shop', `${gone.name} (${gone.kind}, ${gone.action}) · inside ${JSON.stringify(gone.inside)} · room ${gone.room} · offer "${gone.label}" · cash ${seen.cash}`);
       if (!gone || !gone.inside) errors.push('shop: ' + (`the door was pressed at ${door.name} and he never got inside (inside ${gone && gone.inside}, transition ${seen.transition}, fade ${seen.frameFade})`));
       else {
-        const drawn = await page.evaluate(() => window.__vice.crowdRender ? window.__vice.crowdRender() : null);
         const stats = await page.evaluate(() => window.__vice.stats());
-        log('shop', `inside: frame lights ${stats.frameLights === undefined ? 'n/a' : stats.frameLights}, tiles ${stats.tilesLoaded}, street clock ${stats.street.toFixed(2)} s`);
+        log('shop', `inside: room ${gone.room}, lights ${gone.lights}, hold ${gone.holding} at ${Math.round((gone.progress || 0) * 100)}%, tiles ${stats.tilesLoaded}, street clock ${(stats.streetSeconds || 0).toFixed(2)} s`);
         await page.evaluate(() => window.__vice.press('shop'));   // and back out the same way he came in
         for (let i = 0; i < 16; i++) {
           const s = await page.evaluate(() => window.__vice.shop());
@@ -293,7 +298,6 @@ if (footOn && reached) {
         if (back && back.inside) errors.push('shop: ' + 'the door let him in and would not let him out');
         else log('shop', 'back on the pavement');
       }
-      void drawn;
     }
     const lines = await page.evaluate(() => {
       const grab = (n) => { const e = document.querySelector(`.hud__${n}-text`); return e ? e.textContent.trim() : ''; };
