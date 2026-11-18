@@ -34,6 +34,22 @@ Settings ▸ Graphics device note, and to scripts as `window.__vice.engine` / `r
 The details — what the model is, and why it is built this way — are in
 [docs/PALOMA-PD.md](docs/PALOMA-PD.md).
 
+## What was added for the street
+
+The release ships a city with cars in it and nobody on the pavements. This is the rest of the street:
+
+| File | What it is |
+| --- | --- |
+| `web/src/game/crowd.js` | The people: where they walk, how they answer a car, when they wave a cab down, and the limbs the near ones get. |
+| `web/src/world/people/rig.js` | The nine-bone rig that poses a person — walk, stand, startle, hail — solved to world matrices per part, no skinning. |
+| `web/src/world/people/body.js` | The bodies, built in code with the release's own geometry kit: one merged mesh for the far crowd, one per part for the near. |
+| `web/src/game/wanted.js` | The wanted record: what each thing you did costs, how the stars ladder up, and how they cool off. |
+| `web/src/game/races.js` | Point-to-point races taken from a kerb — the course walked out of the lane graph, the gates judged by crossing a line. |
+| `web/src/vehicles/traffic/liveries.js` | Paint for the patrol fleet (marked, two-tone, county, unmarked) on the release's own car bodies. |
+| `web/src/game/game.js`, `game/hud.js`, `ui/*` | The HUD's three rows — the job, the race, the crew — the stars beside them, and `V` to take a race. |
+
+The details are in [docs/STREET-LIFE.md](docs/STREET-LIFE.md).
+
 ## Layout
 
 ```

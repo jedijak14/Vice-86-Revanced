@@ -8,6 +8,7 @@
 import * as mt from './materials.js';
 import { slabShell, polyline } from './body.js';
 import { endPanel, faceLamp, roundLamp, lightbar, roofSign, sideStrip, sideMarker, steeringWheel, wiper } from './parts.js';
+import { patrol, unmarked } from './liveries.js';
 import { box, rod, disc, quad, vec, X, Y, Z } from './kit.js';
 
 const V = mt.VEHICLE, hex = mt.hex;
@@ -157,12 +158,14 @@ const taxi = () => sedan({
 });
 
 const police = () => {
-  const white = mt.fixed(hex(0xe8e6da)), s = 5.22 / 5.4, d0 = 1.665 * s, d1 = 3.665 * s;
+  const s = 5.22 / 5.4, d0 = 1.665 * s, d1 = 3.665 * s;
   return sedan({
     name: 'police', kind: 'police', weight: 2, seed: 53, L: 5.22, W: 1.85, H: 1.4, wb: 2.86, trackF: 1.52, trackR: 1.5, R: 0.341, tyreW: 0.215, clearance: 0.15, FO: 1.0, RO: 1.36, mass: 1650,
     eye: [0.38, 1.1, 0.15], trim: TRIM.grey, fleet: true, paints: 'patrolGreen', extraHeight: 0.18, doorLod: 2,
-    // Green bonnet, wings, boot and quarters; white doors, pillars and roof.
-    livery: (z) => ({ side: (zz) => (zz < z(d0) && zz > z(d1) ? white : null), band: () => null, cabin: () => white }),
+    // Green bonnet, wings, boot and quarters; white doors, pillars and roof. The pattern is the
+    // agency's, not this body's (vehicles/traffic/liveries.js): the same livery goes on any of the
+    // cars the island already builds, which is what a police car is here.
+    livery: (z) => patrol(z, { doors: [d0, d1] }),
     strips: [{ mat: mt.fixed([0.03, 0.03, 0.03]), y: 0.5 - 0.03, h: 0.06, proud: 0.0025, flat: true, lod: 2, step: 0.6 }],
     centreParts: ({ p, cab, skC, lv }) => {
       const zs = p.z(2.765 * s), top = cab.bandAt(cab.topS(zs), 0)[1];
@@ -176,6 +179,23 @@ const police = () => {
     },
   });
 };
+
+const policeUnmarked = () => sedan({
+  name: 'police-unmarked', kind: 'police', weight: 1, seed: 59, L: 4.78, W: 1.76, H: 1.37, wb: 2.66, trackF: 1.46, trackR: 1.44, R: 0.305, tyreW: 0.185, clearance: 0.15, FO: 0.93, RO: 1.19, mass: 1350,
+  eye: [0.36, 1.07, 0.16], trim: TRIM.grey, flake: 20, paints: 'charcoal',
+  // A radio car: no bar, no stripe, nothing on the paint. What gives it away is the aerial on the
+  // rear wing and the fact that it is following you.
+  livery: unmarked,
+  centreParts: ({ p, skC, lv }) => {
+    if (lv === 2) return;
+    // Whips on the rear wing: a quarter-scale aerial in its mount, leaning outboard.
+    const z = p.z(-2.0), y = 0.86;
+    // The whip itself is a rod, and its mount a short length of black trim: an aerial is the one
+    // fitting a radio car cannot be built without, and the only thing that gives it away.
+    rod(skC, mt.blackTrim, [0.62, y, z], [0.64, y + 0.46, z - 0.06], 0.005, lv === 0 ? 6 : 4, false);
+    rod(skC, mt.blackTrim, [0.62, y - 0.01, z - 0.04], [0.62, y + 0.02, z + 0.02], 0.024, 8, true);
+  },
+});
 
 /** Personal two-door: the sedan recipe with one long door, a short cabin under a padded half roof and a formal upright grille. */
 const coupe = () => {
@@ -548,4 +568,4 @@ const bus = () => {
   };
 };
 
-export const SPECS = [compact, sedanFull, coupe, wagon, pickup, van, taxi, police, sports, bus, truck, sedanMid];
+export const SPECS = [compact, sedanFull, coupe, wagon, pickup, van, taxi, police, sports, bus, truck, sedanMid, policeUnmarked];

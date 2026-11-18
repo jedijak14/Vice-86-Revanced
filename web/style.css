@@ -254,15 +254,35 @@ html, body {
 .hud__police.is-on { opacity: 1; }
 .hud__police-label { color: var(--ink-35); }
 .hud__police-text { color: var(--pink); }
-.hud__police-pips { display: flex; gap: calc(0.35 * var(--u)); }
-.hud__police-pip {
-  width: max(3px, calc(0.5 * var(--u)));
-  height: max(3px, calc(0.5 * var(--u)));
-  border-radius: 50%;
-  background: var(--ink-18);
-}
-.hud__police-pip.is-on { background: var(--pink); }
+.hud__police-pips { display: flex; gap: calc(0.3 * var(--u)); }
+/* Wanted stars: the department's gold when lit, a hairline of ink when not. Drawn as icons rather
+   than glyphs so that they take the same stroke as every other symbol in the interface. */
+.hud__star { display: flex; color: var(--ink-18); transition: color 180ms ease-out, transform 180ms ease-out; }
+.hud__star .icon { width: max(9px, calc(0.95 * var(--u))); height: max(9px, calc(0.95 * var(--u))); }
+.hud__star.is-on { color: #e8c25a; }
+.hud__star.is-on .icon { fill: rgba(232, 194, 90, 0.32); }
+.hud__police.is-hot .hud__star.is-on { animation: hud-star 1.6s ease-in-out infinite; }
+@keyframes hud-star { 50% { transform: scale(1.12); } }
 .ui.is-touch .hud__police { justify-content: center; }
+
+/* One line each for the job, the race and the room, under the police line. */
+.hud__rows { display: flex; flex-direction: column; gap: calc(0.25 * var(--u)); margin-top: calc(0.45 * var(--u)); }
+.hud__row {
+  display: flex;
+  align-items: center;
+  gap: calc(0.45 * var(--u));
+  font-size: max(9px, calc(0.95 * var(--u)));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.hud__row.is-on { opacity: 1; }
+.hud__row .icon { width: max(10px, calc(1.1 * var(--u))); height: max(10px, calc(1.1 * var(--u))); color: var(--ink-35); }
+.hud__row-label { color: var(--ink-35); }
+.hud__row-text { color: var(--cyan); }
+.hud__row--race .icon, .hud__row--race .hud__row-text { color: var(--pink); }
+.ui.is-touch .hud__rows { align-items: center; }
 
 .hud__clock {
   --size: calc(3 * var(--u));
@@ -548,6 +568,9 @@ html, body {
   touch-action: none;
 }
 .touch__tap .icon { width: 1.7em; height: 1.7em; }
+/* A street race that can be taken from here: the flag lights up, and it is inert until it does. */
+.touch__tap--race:disabled { opacity: 0.34; }
+.touch__tap--race.is-ready { border-color: var(--hot-70, rgba(255, 92, 140, 0.7)); color: #ff6b9d; }
 .touch__tap:active { background: var(--ink-18); }
 
 .touch__steer {

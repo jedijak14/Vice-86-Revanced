@@ -83,13 +83,37 @@ function buildMap(doc) {
   return { root, canvas, north };
 }
 
+const WANTED_STARS = 5;
+
 function buildPolice(doc) {
-  // Three pips, the heat the dispatch has on the player, and one line of what it is doing.
-  const pips = [0, 1, 2].map(() => el(doc, 'i', 'hud__police-pip'));
+  // The wanted level as five stars, and one line of what the dispatch is doing about it. The stars
+  // are the record a driver carries; the line is the incident in front of him, and both are read
+  // from the same row so that the eye goes to one place for the police.
+  const pips = [];
+  for (let i = 0; i < WANTED_STARS; i++) pips.push(el(doc, 'i', 'hud__star', icon(doc, 'star')));
   const text = el(doc, 'span', 'hud__police-text');
   const root = el(doc, 'div', 'hud__police',
     el(doc, 'span', 'hud__police-label', 'Paloma PD'), el(doc, 'span', 'hud__police-pips', ...pips), text);
   return { root, pips, text };
+}
+
+/**
+ * The three rows under the police line: a job in hand, a race in hand, and who else is on the
+ * street with you. Built once, shown by class, and each row carries its own symbol so that the line
+ * reads from across the car without being read.
+ */
+function buildRows(doc) {
+  const build = (name, iconName, label) => {
+    const text = el(doc, 'span', `hud__${name}-text`);
+    const root = el(doc, 'div', `hud__row hud__row--${name}`, icon(doc, iconName, 'hud__row-icon'), el(doc, 'span', 'hud__row-label', label), text);
+    return { root, text };
+  };
+  return {
+    mission: build('mission', 'target', 'Job'),
+    race: build('race', 'flag', 'Race'),
+    crew: build('crew', 'link', 'Room'),
+    root: null,
+  };
 }
 
 function buildClock(doc) {
@@ -108,10 +132,12 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
   const map = buildMap(doc);
   const clock = buildClock(doc);
   const police = buildPolice(doc);
+  const rows = buildRows(doc);
   const banner = el(doc, 'div', 'hud__banner');
   const place = el(doc, 'div', 'hud__place');
+  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root);
 
-  const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, police.root, banner), map.root, place, gauge.root);
+  const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, police.root, rows.root, banner), map.root, place, gauge.root);
   root.setAttribute('aria-hidden', 'true');   // a visual instrument cluster; nothing here is read out
   parent.appendChild(root);
 
@@ -133,6 +159,8 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
     police: textWriter(police.text),
     policeOn: classWriter(police.root, 'is-on'),
     policePip: police.pips.map((node) => classWriter(node, 'is-on')),
+    row: ['mission', 'race', 'crew'].map((name) => textWriter(rows[name].text)),
+    rowOn: ['mission', 'race', 'crew'].map((name) => classWriter(rows[name].root, 'is-on')),
     lamps: classWriter(gauge.lamps, 'is-on'),
     brake: classWriter(gauge.brake, 'is-on'),
     nitrous: styleWriter(gauge.nitrous, 'stroke-dashoffset'),
@@ -257,7 +285,14 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
       write.place(model.place);
       write.police(model.police);
       write.policeOn(Boolean(model.police));
-      for (let i = 0; i < police.pips.length; i++) write.policePip[i](model.policeHeat > i);
+      // Stars, not pips: the wanted level is what the row carries, and the line beside it says what
+      // the agency is doing about it. A star that is lit is the department's own gold.
+      for (let i = 0; i < police.pips.length; i++) write.policePip[i](model.stars > i);
+      const lines = [model.mission, model.race, model.crew];
+      for (let i = 0; i < 3; i++) {
+        write.row[i](lines[i]);
+        write.rowOn[i](Boolean(lines[i]));
+      }
       write.lamps(model.headlamps);
       write.brake(model.handbrake);
       write.nitrous(NITROUS_OFFSETS[model.nitrous]);

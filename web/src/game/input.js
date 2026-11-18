@@ -16,7 +16,7 @@
 import { clamp, smoothstep, lerp } from '../core/math.js';
 
 export const HELD_ACTIONS = ['throttle', 'brake', 'steer', 'handbrake', 'boost', 'lookBack', 'horn'];
-export const PRESS_ACTIONS = ['camera', 'headlamps', 'recover', 'time', 'weather', 'pause'];
+export const PRESS_ACTIONS = ['camera', 'headlamps', 'recover', 'time', 'weather', 'race', 'pause'];
 
 /** Keyboard layout by physical key (`KeyboardEvent.code`), so it is the same on every layout. */
 export const KEY_BINDINGS = Object.freeze({
@@ -33,6 +33,7 @@ export const KEY_BINDINGS = Object.freeze({
   KeyR: 'recover',
   KeyT: 'time',
   KeyY: 'weather',
+  KeyV: 'race',               // take the street race on offer here (game/races.js)
   Escape: 'pause', KeyP: 'pause',
 });
 

@@ -228,6 +228,11 @@ export function createUI({ root, settings, actions = {}, window: win = root.owne
   const ui = {
     hud: { update: hud.update },
 
+    /** Tell the touch overlay what the street is offering (game/races.js). Ignored on a keyboard. */
+    touchOffer(offer) {
+      if (typeof touch.setRaceOffer === 'function') touch.setRaceOffer(offer);
+    },
+
     get screen() { return screen; },
     get menuOpen() { return navigable() !== null; },
 

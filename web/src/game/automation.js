@@ -108,6 +108,34 @@ export function createHooks() {
     police: () => (game && game.police ? game.police : null),
     /** Paloma PD for a script: the same order the dispatch gives itself, 0..3 (see game.js). */
     dispatch: (heat, message) => run((g) => g.orderPolice(heat, message)),
+    /** The wanted level as the ledger keeps it: { stars, points, cause, since, raised, lowered }. */
+    wanted: () => (game && game.wanted ? game.wanted : null),
+    /** Clears the record, the way a completed stop does. */
+    clearWanted: () => run((g) => g.clearWanted()),
+    /** The crowd on the pavements: { peds, articulated, density, hailing, startled, passenger }. */
+    crowd: () => (game && game.crowd ? game.crowd : null),
+    /** Puts a hailer on the nearest kerb to x, z, for a script that wants a fare. */
+    hail: (x, z) => run((g) => g.hailAt(x, z)),
+    /** Street races: the meeting offered where the car is standing, and the board. */
+    race: () => (game ? { offer: game.raceOffer(), board: game.races.snapshot() } : null),
+    /** Why the street will not lay a course: { offer, road, walkable, lanes } — diagnostics only. */
+    raceDiag: () => run((g) => {
+      const car = g.player ? g.player.pos : null;
+      const hit = g.graph ? g.graph.nearest(car[0], car[2], 40, (l) => !l.junction && l.junctionId < 0 && l.length > 20) : null;
+      const any = g.graph ? g.graph.nearest(car[0], car[2], 40) : null;
+      let long = 0, total = 0;
+      if (g.graph) for (const l of g.graph.lanes) { total++; if (l.length > 20 && !l.junction && l.junctionId < 0) long++; }
+      return {
+        car: car && [Math.round(car[0]), Math.round(car[2])],
+        hit: hit ? { id: hit.lane.id, s: Math.round(hit.s), len: Math.round(hit.lane.length), next: hit.lane.next.length } : null,
+        any: any ? { id: any.lane.id, len: Math.round(any.lane.length), next: any.lane.next.length, jid: any.lane.junctionId, j: !!any.lane.junction } : null,
+        long, total, why: g.races.last,
+      };
+    }),
+    /** Starts a meeting ('local' | 'county' | 'palm'), putting the car on the line. */
+    startRace: (tier = 'local') => run((g) => g.startRace(tier)),
+    /** Calls the race off, as the V key does. */
+    abortRace: () => run((g) => { g.races.abort('Called off by a script'); return g.races.snapshot(); }),
     /** Every caught error and failed shader, with context. */
     errors: [],
     stats: () => (game ? game.stats() : {}),

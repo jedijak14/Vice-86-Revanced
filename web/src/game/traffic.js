@@ -179,7 +179,14 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
   // puts an officer on the ground next to a stopped car. It never writes a pose and never
   // creates a body: the drivers keep their junction grants, and an officer walks in the drawn
   // world only, so nothing here can push traffic or clip through a wall undetected.
+  // Every type the agency puts on the road: the marked cruiser (the release's own type 7) and the
+  // unmarked radio car this fork adds on the mid-size body. `policeType` is the marked one, which is
+  // what the beat is made of; the dispatch counts them all, because to a driver a follow car is a
+  // follow car whatever it is wearing.
+  const policeTypes = new Set();
+  for (let i = 0; i < models.length; i++) if (models[i].kind === 'police') policeTypes.add(i);
   const policeType = models.findIndex((model) => model.kind === 'police');
+  const unmarkedType = models.findIndex((model) => model.name === 'police-unmarked');
   const police = drivable && policeType >= 0 ? new PatrolDispatch({
     graph,
     // A unit is seen when a ray from the camera to it reaches it: buildings, walls and other
@@ -360,8 +367,9 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
     const v = makeVehicle(type, DRIVING, driver.x, driver.y, driver.z, driver.yaw, paints[rng.int(0, paints.length - 1)], rng.range(0, 0.3));
     v.driver = driver;
     v.dusk = hash01(driver.seed, 11) < FORGETFUL_SHARE ? FORGETFUL_SUN_ELEVATION : HEADLAMP_SUN_ELEVATION - HEADLAMP_SPREAD * hash01(driver.seed, 9);
-    v.lightBar = models[type].kind === 'police' && hash01(driver.seed, 13) < ON_CALL_SHARE;
-    if (police && type === policeType) { v.onCall = v.lightBar; police.add(v); }
+    // A bar only goes on a car built with one: the radio car has no glass on its roof to light.
+    v.lightBar = policeTypes.has(type) && type !== unmarkedType && hash01(driver.seed, 13) < ON_CALL_SHARE;
+    if (police && policeTypes.has(type)) { v.onCall = v.lightBar; police.add(v); }
     driver.userData = v;
     moving.push(v);
     return true;
@@ -380,7 +388,7 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
   const patrolWanted = () => (density === 0 ? 0 : density >= 2 ? 2 : 1);
   function patrolCount() {
     let n = 0;
-    for (const v of moving) if (v.type === policeType) n++;
+    for (const v of moving) if (v.type === policeType || v.type === unmarkedType) n++;
     return n;
   }
 
@@ -444,8 +452,12 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
         else if (v.driver.finished || v.driver.idle > RETIRE_STUCK_SECONDS) gone = !seen && d > 60;
         else gone = !seen && dx * hx + dz * hz < 0;
       }
+      // A car in somebody's race is kept on the road while the course still holds it: the field falling
+      // apart behind a straggler is a broken board, not a close finish. It is still dropped at the far
+      // radius, where the race marks it out (game/races.js).
+      if (gone && v.raced && d < RETIRE_FAR) gone = false;
       // The last cruiser of the beat stays on the road while it is still worth keeping.
-      if (gone && police && v.type === policeType && d < PATROL_KEEP && v.state === DRIVING && !v.driver.finished && patrolCount() <= 1) gone = false;
+      if (gone && police && policeTypes.has(v.type) && d < PATROL_KEEP && v.state === DRIVING && !v.driver.finished && patrolCount() <= 1) gone = false;
       if (gone) {
         destroyVehicle(v);
         removeAt(moving, i);
@@ -579,6 +591,8 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
     sim,
     /** The patrol dispatch, or null where there is no road network (game/police.js). */
     police,
+    /** Is this vehicle's type a Paloma PD car (marked or unmarked)? For a caller that met one. */
+    isPolice(v) { return !!v && policeTypes.has(v.type); },
     /** Number of moving vehicles (wrecks included). */
     get count() { return moving.length; },
     get parkedCount() { return parked.length; },
@@ -677,6 +691,50 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
       const want = MOVING_BY_DENSITY[density];
       for (let i = 0; i < want * 14 && moving.length < want; i++) {
         trySpawn(rng.range(-Math.PI, Math.PI), rng.range(POPULATE_NEAR, POPULATE_FAR), POPULATE_NEAR, 0);
+      }
+    },
+
+    /**
+     * Cars for a street race: `count` vehicles put on the grid behind a start line and told to follow
+     * `route` over the lane graph. They are ordinary traffic in every other respect — the same drivers,
+     * the same junction grants, the same retire rules — which is why they are worth racing: nothing is
+     * simulated twice. (game/races.js)
+     * @returns {object[]} one record per car that was actually placed, `{ car, driver, box, view }`
+     */
+    fieldForRace(lane, s, count, route) {
+      const cars = [];
+      // A street grid: cars go in front of the line first, since those are the ones you can see and
+      // overtake, then behind it. `canPlace` refuses a spot somebody is already occupying, so a slot
+      // that is taken is skipped rather than waited for — a race with three opponents beats a fair one
+      // that never starts.
+      const spots = [];
+      for (let i = 0; i < count; i++) spots.push(s + 14 + i * 12, i ? s - 16 - i * 12 : -999);
+      for (const want of spots) {
+        if (cars.length >= count) break;
+        if (!(want > 4) || want > lane.length - 4) continue;
+        if (!spawnOn(lane, want, -1)) continue;
+        const v = moving[moving.length - 1];
+        if (v && v.driver) {
+          if (route) sim.setRoute(v.driver, route);
+          // Only the vehicle and its driver are handed out: the box and the view are the traffic pool's
+          // to take back, and a car that falls behind the field is retired like any other (races.js reads
+          // `car.driver` to tell a live opponent from a parked one).
+          v.raced = true;
+          cars.push({ car: v, driver: v.driver });
+        }
+      }
+      return cars;
+    },
+
+    /** Give a race's cars back to the street: the order is taken away and they drive on their own. */
+    releaseFromRace(cars) {
+      for (const c of cars || []) {
+        if (!c.car) continue;
+        // The mark comes off with the order: from here the street owns the car again, retire rules and
+        // all. A car whose driver is gone has nothing left to be told.
+        c.car.raced = false;
+        if (c.car.driver) sim.setRoute(c.car.driver, null);
+        else c.driver = null;
       }
     },
 

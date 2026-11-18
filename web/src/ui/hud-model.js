@@ -156,6 +156,10 @@ export function createHudModel() {
     north: 0,            // degrees
     police: '',          // what the dispatch is doing about the player, one line
     policeHeat: 0,       // 0..3: how many pips are lit
+    stars: 0,            // 0..5: the wanted level, one star per step of the ladder
+    race: '',            // the race in hand: where in it you are
+    mission: '',         // the job in hand: what to do next
+    crew: '',            // who else is in this room
   };
 }
 
@@ -171,6 +175,36 @@ function policeLine(pd) {
   if (pd.mode === 'cleared') return 'traffic stop complete';
   if (pd.mode === 'escaped') return 'search called off';
   return '';
+}
+
+/** The race line: how far into it, and how the clock reads. */
+function raceLine(race) {
+  if (!race || !race.active) return '';
+  if (race.countdown > 0) return `starting in ${Math.ceil(race.countdown)}`;
+  if (race.finished) return `${race.place ? `P${race.place}` : 'finished'} · ${formatLap(race.lastMs)}`;
+  const left = Math.max(0, (race.total | 0) - (race.passed | 0));
+  return `${race.name || 'Street race'} · ${left} to go · ${formatLap(race.elapsedMs)}`;
+}
+
+/** The job line: what the next objective asks for, in the mission's own words. */
+function missionLine(mission) {
+  if (!mission) return '';
+  if (mission.offered && mission.offered.length) return `Jobs · ${mission.offered.length} to take at the kerb`;
+  if (!mission.active || !mission.objective) return '';
+  return mission.objective;
+}
+
+function crewLine(net) {
+  if (!net || !net.room) return '';
+  if (!net.peers) return `Room ${net.room} · waiting`;
+  return `Room ${net.room} · ${net.peers + 1} driving`;
+}
+
+/** mm:ss.t, the shape a lap time takes on a board. */
+export function formatLap(ms) {
+  if (!(ms > 0)) return '--:--';
+  const t = Math.max(0, ms / 1000), m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`;
 }
 
 /**
@@ -216,6 +250,12 @@ export function updateHudModel(model, input, units, now) {
   // here and nowhere else in the UI.
   model.police = policeLine(input.police);
   model.policeHeat = input.police ? Math.max(0, Math.min(3, input.police.heat | 0)) : 0;
+  // The wanted level is the record, not the incident: the stars stay up after the last car has
+  // given up, which is the whole reason to draw them somewhere of their own.
+  model.stars = input.wanted ? Math.max(0, Math.min(5, input.wanted.stars | 0)) : 0;
+  model.race = raceLine(input.race);
+  model.mission = missionLine(input.mission);
+  model.crew = crewLine(input.net);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

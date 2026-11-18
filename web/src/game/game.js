@@ -28,11 +28,15 @@ import { applyPreset, isPresetName } from '../ui/settings.js';
 import { FixedStepper, MAX_STEPS_PER_FRAME } from './loop.js';
 import { createClock, WEATHER_LABELS, TIME_LABELS } from './clock.js';
 import { prepareLaneGraph } from './lanes.js';
-import { writeSignalLamps } from './signals.js';
+import { writeSignalLamps, signalState, SIGNAL } from './signals.js';
+import { comfortSpeed } from './lanes.js';
 import { LampBuffer } from './lamps.js';
 import { createPlayer } from './player.js';
 import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
+import { createCrowd, ARTICULATE_CAP } from './crowd.js';
+import { WantedLedger } from './wanted.js';
+import { createRaces, TIERS as RACE_TIERS } from './races.js';
 import { createEffects } from './effects.js';
 import { createHudFeed } from './hud.js';
 import { ENGINE } from '../render/identity.js';
@@ -135,6 +139,54 @@ export function createGame(deps) {
   });
   /** Paloma PD (game/police.js): null where there is no road network to chase anyone over. */
   const police = traffic.police;
+  // The crowd on the pavements (game/crowd.js), and the record the agency keeps of you
+  // (game/wanted.js). Both are built from what the street already is: the lane graph says where the
+  // pavement is, the plan says where the carriageway ends, and the dispatch says what it saw. With
+  // no road network there is nobody to walk and nothing to be wanted for.
+  const wanted = new WantedLedger();
+  let lastHeat = 0, shownStars = 0, spedFor = 0, redChecked = -1;
+  /** Where the red-light check has already been done on this lap of the approach. */
+  let redLaneId = -1, redAt = -1;
+  const approach = [0, 0, 0];
+  const crowd = createCrowd({
+    graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y,
+    // A person driven at off the kerb is an offence, and the only witness is the crowd itself.
+    onEndanger: (k) => {
+      if (wanted.add('peds scattered', k > 0.8 ? 1 : 0.5)) toast('A pedestrian was struck out of the way');
+    },
+  });
+  // Street races (game/races.js): a route laid on the same lane graph the traffic drives, timed by
+  // gates across the road. `raceKey` is what the nearest one asks for, and it is what the HUD and the
+  // touch overlay both read, so a phone and a keyboard see the same opportunity.
+  const races = createRaces({
+    graph, renderer, traffic, seed: ((seed | 0) ^ 0x9a37) >>> 0, land: LAND_Y,
+    notify: (text) => toast(text),
+  });
+  let raceNear = null, raceSaid = '', raceTimer = 0;
+  // A crash the player caused: physics knows the contact, and the ledger keeps the score. Reported
+  // whatever the dispatch happens to be doing, because a parked car hit at 30 m/s is a charge whether
+  // or not a unit was near enough to radio it in.
+  if (physics.onImpact) {
+    physics.onImpact((e) => {
+      if (phase.name !== 'driving' || !e || e.vehicle !== player.vehicle) return;
+      const other = e.other ? e.other.userData : null;
+      const speed = Math.abs(e.speed || 0);
+      if (speed < 2.2) return;
+      const cruiser = traffic.isPolice(other);
+      // Driving off after a patrol car is the heavier charge; a parked car is not, and neither is a
+      // bumper repair at walking pace (which the speed gate above already refused).
+      const cause = cruiser ? (speed > 9 ? 'hit and run' : 'patrol car struck') : 'collision';
+      if (wanted.add(cause, speed > 16 ? 1.6 : 1)) {
+        toast(cruiser ? `You hit a patrol car · ${WantedLedger.label(wanted.stars)}` : 'A crash · the record grew');
+      }
+    });
+  }
+  /** One object for the HUD, so that the street's news arrives in one place each frame. */
+  const hudStatus = { police: null, wanted: null, race: null, mission: null, net: null };
+  /** Where the crowd should look for a car to react to: filled from the player every frame. */
+  const crowdAt = { x: 0, y: LAND_Y, z: 0, yaw: 0, speed: 0 };
+  /** The car, as the crowd and the races want it: [x, z] for the plan's sampler. */
+  const playerPos2 = [0, 0];
   const effects = createEffects({ physics, audio, camera, input, settings });
   const hud = createHudFeed({ ui, world });
   const skids = createSkidMarks({ renderer, rubberFill: MARKING_FILL.RUBBER });
@@ -371,8 +423,10 @@ export function createGame(deps) {
     camera.snap();
     waterTime = 0;
     if (autopilot) autopilot.reset();
-    // The player has been moved: whatever the units were chasing is gone with it.
+    // The player has been moved: whatever the units were chasing is gone with it, and so is the
+    // crowd, which would otherwise walk on from a pavement they were left behind on.
     if (police) police.reset();
+    crowd.reset();
     traffic.clear();
     refreshSubject();
     // Traffic is placed around where the camera will be, so the camera goes there first; the
@@ -421,7 +475,11 @@ export function createGame(deps) {
       renderer.setQuality(g);
     }
     if (typeof world.setDensity === 'function') world.setDensity(settings.graphics.density);
-    traffic.setDensity(options.traffic === null ? settings.graphics.traffic : options.traffic);
+    const trafficDensity = options.traffic === null ? settings.graphics.traffic : options.traffic;
+    traffic.setDensity(trafficDensity);
+    // People come with the street the player asked for, and limbs come with the graphics preset:
+    // a person with arms is seven draw calls, and a slow machine needs them elsewhere.
+    crowd.setDensity(trafficDensity, ARTICULATE_CAP[settings.graphics.preset] ?? 4);
     input.sensitivity = settings.controls.steerSensitivity || 1;
     if (phase.name === 'driving' || phase.name === 'paused') clock.timeFlow = settings.game.timeFlow;
     clock.reduceFlashing = Boolean(settings.game.reduceFlashing);
@@ -600,11 +658,68 @@ export function createGame(deps) {
       toast(TIME_LABELS[name] || name);
       ui.setState({ time: name });
     }
+    if (input.consume('race') && driving) {
+      if (races.state.active) { races.abort('Race called off'); }
+      else if (raceNear) startRace(raceNear.tier.id);
+      else toast('No street race from here');
+    }
     if (input.consume('weather') && driving) {
       const name = clock.nextWeather();
       toast(WEATHER_LABELS[name] || name);
       ui.setState({ weather: name });
     }
+  }
+
+  /**
+   * What the street itself witnessed, as distinct from what a unit reported (which is escalated by
+   * the dispatch above): too fast on this road, and over a red. Both are cheap to judge from what the
+   * game has already computed — a lane, a station, a signal clock — and both are the kind of thing a
+   * driver does while nobody is watching, which is exactly when a record should still grow.
+   */
+  function chargeFromStreet(dt) {
+    if (!graph || phase.name !== 'driving') { spedFor = 0; return; }
+    const speed = Math.abs(player.forwardSpeed || 0);
+    const time = traffic.sim ? traffic.sim.time : 0;
+    const hit = graph.nearest(player.pos[0], player.pos[2], 14, (lane) => !lane.junction && lane.length > 20);
+    if (!hit) { spedFor = 0; return; }
+    const limit = comfortSpeed(hit.lane, hit.s);
+    // A tolerance, and a second of it: a momentary read of 3 m/s over on a cambered bridge is not
+    // speeding, and neither is a short burst past the sign on the way into a gap in traffic.
+    if (speed > limit + 3.2) spedFor += dt; else spedFor = Math.max(0, spedFor - dt * 2);
+    if (spedFor > 1.6) {
+      spedFor = 0;
+      if (wanted.add('speeding')) toast('Speeding · the street noticed');
+    }
+    // The red: judged at the mouth of the junction, on the lane the player is actually over, from the
+    // same answer the lamps are drawn from. Once per approach, because a red run is one offence.
+    const control = hit.lane.control;
+    const junction = control && control.junctionRef;
+    if (!junction || !junction.groups) return;
+    if (redLaneId === hit.lane.id && hit.s < redAt) return;
+    const toGo = hit.lane.length - hit.s;
+    if (toGo > 26 || speed <= 3) return;
+    const green = signalState(junction, control.group || 0, time) === SIGNAL.GREEN;
+    redLaneId = hit.lane.id; redAt = hit.s;
+    if (green) return;
+    if (wanted.add('red light')) toast('Over a red · that will be written down');
+  }
+
+  /**
+   * Start a meeting: the course is laid from where the car is, and the car is put on the line. A race
+   * begun 300 m down the road from the start gate is a race already lost, so the placement is not a
+   * courtesy — and it is what makes a race startable from a kerb, a car park or a rooftop ramp.
+   */
+  function startRace(tierId) {
+    const at = player.pos;
+    if (!races.start(tierId, at[0], at[2])) return false;
+    const place = races.place();
+    if (place && Math.hypot(place[0] - at[0], place[1] - at[2]) > 24) {
+      player.place([place[0], LAND_Y, place[1]], place[2]);
+      camera.snap();
+      crowd.reset();
+    }
+    races.resync();
+    return true;
   }
 
   /** What surrounds the car, sampled a few times a second for the audio ambience. */
@@ -647,6 +762,21 @@ export function createGame(deps) {
     engine: ENGINE,
     /** Paloma PD: what the units are doing, as plain data (null without a road network). */
     get police() { return police ? police.snapshot() : null; },
+    /** The street's own population, and what the agency has written down against you. */
+    get crowd() { return crowd.snapshot(); },
+    get wanted() { return wanted.snapshot(); },
+    /** The crowd, for a script that wants somebody on a particular corner (see game/missions.js). */
+    hailAt(x, z) { return crowd.makeHailer(x, z) ? crowd.snapshot() : null; },
+    /** Street races: the meetings on offer here, the board, and the course. */
+    races,
+    raceTiers: RACE_TIERS,
+    /** Start a meeting by hand (the touch overlay, a script): the same path the V key takes. */
+    startRace(tierId) { return startRace(tierId); },
+    /** What the street is offering where the car is standing (null = nothing to take). */
+    raceOffer() { return raceNear; },
+    /** The crowd, for a mission that wants a fare on a particular corner. */
+    /** The record, cleared: what a completed traffic stop does to it. */
+    clearWanted() { wanted.clear(); return wanted.snapshot(); },
     /** Paloma PD for scripts: 1..3 orders an incident, 0 ends one as a completed stop. */
     orderPolice(heat, message) {
       if (!police) return null;
@@ -954,8 +1084,54 @@ export function createGame(deps) {
         // The dispatch works on the street while the player is driving: no policing the title
         // scene, the room, or a frame that is not moving.
         if (police) police.enabled = phase.name === 'driving';
+        crowd.enabled = phase.name === 'driving';
+        // A race's clock is the one thing that must not run while the game is paused, and a car put back
+        // on the road by R has been carried, not driven: both are told here.
+        if (races.state.active && phase.name !== 'driving') races.resync();
         traffic.setFocus(player, camera);
         traffic.update(simDt, env.sunElevation, weather.rain, stepTime);
+        // What the street is doing: the crowd walks, and the stars follow what the police saw.
+        crowdAt.x = player.pos[0]; crowdAt.y = player.pos[1]; crowdAt.z = player.pos[2];
+        playerPos2[0] = player.pos[0]; playerPos2[1] = player.pos[2];
+        crowdAt.yaw = player.vehicle ? player.vehicle.yaw : crowdAt.yaw;
+        crowdAt.speed = Math.abs(player.forwardSpeed || 0);
+        crowd.step(stepTime, crowdAt, phase.name === 'driving');
+        if (police) {
+          const heat = police.status.heat | 0;
+          // The dispatch's escalation is the witness: it is what saw the offence, and its heat is
+          // how seriously it took it. The stars are that, kept after the cars have gone home.
+          // Which charge the escalation answers to, in the ledger's own weights: a unit starting to
+          // chase is a struck car, a pursuit with officers out is the driver running for it.
+          if (heat > lastHeat) wanted.add(heat >= 3 ? 'hit and run' : heat === 2 ? 'patrol car struck' : 'speeding');
+          lastHeat = heat;
+        }
+        chargeFromStreet(stepTime);
+        wanted.step(stepTime, police ? police.status : null);
+        if (wanted.stars !== shownStars) {
+          const up = wanted.stars > shownStars;
+          shownStars = wanted.stars;
+          if (wanted.stars > 0) {
+            toast(up ? `${WantedLedger.label(wanted.stars)} \u00b7 ${wanted.stars} star${wanted.stars > 1 ? 's' : ''}`
+                     : `${wanted.stars} star${wanted.stars > 1 ? 's' : ''} \u00b7 you are cooling off`);
+          }
+        }
+        hudStatus.police = police ? police.status : null;
+        hudStatus.wanted = wanted.snapshot();
+        races.step(stepTime, playerPos2, phase.name === 'driving');
+        hudStatus.race = races.snapshot();
+        // What the street is offering here, once a second: a race is taken from a kerb, not from a menu.
+        raceTimer -= stepTime;
+        if (raceTimer <= 0 && phase.name === 'driving') {
+          raceTimer = 1.1;
+          const near = races.state.active ? null : (races.offer(playerPos2[0], playerPos2[1]) || [])[0] || null;
+          raceNear = near;
+          const line = near ? `${near.tier.name} · ${Math.round(near.length / 100) / 10} km · press V` : '';
+          if (line !== raceSaid) {
+            raceSaid = line;
+            if (line) toast(line);
+            ui.touchOffer(near);
+          }
+        }
         traffic.writeLamps(lamps, camera.position, frame.time);
         if (graph) writeSignalLamps(lamps, graph.junctions, traffic.sim.time, camera.position);
         nitrous.update(simDt, controls.throttle, player, lamps);
@@ -965,7 +1141,7 @@ export function createGame(deps) {
 
       // The world follows the camera on the street, and in the garage the car waiting up there.
       world.update(inGarage ? player.pos : camera.position, dt);
-      if (phase.name === 'driving') hud.update(simDt, player, clock.timeOfDay, controls.handbrake, nitrous, police ? police.status : null);
+      if (phase.name === 'driving') hud.update(simDt, player, clock.timeOfDay, controls.handbrake, nitrous, hudStatus);
       if (audio) {
         sampleSurroundings(simDt);
         feedAudio(simDt);

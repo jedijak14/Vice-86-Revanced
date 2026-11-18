@@ -19,8 +19,13 @@ export function createHudFeed({ ui, world }) {
   const values = {
     speed: 0, rpm: 0, redline: 1, gear: 1, headlamps: false, handbrake: false, clock: 0,
     district: '', heading: 0, position: [0, 0, 0], nitrous: 1, boosting: false,
-    /** The patrol dispatch's status object, read in place by the HUD's view model (may be null). */
+    /** The four lines the street writes: what the police are doing, what you owe them, and the two
+     *  jobs in hand. Read in place by the HUD's view model (any of them may be null). */
     police: null,
+    wanted: null,
+    race: null,
+    mission: null,
+    net: null,
   };
   let districtTimer = 0;
   let metres = MAP_METRES;
@@ -47,9 +52,11 @@ export function createHudFeed({ ui, world }) {
      * @param {number} hours    time of day
      * @param {number} handbrake  0..1 as applied
      * @param {{level: number, boosting: boolean}} nitrous
-     * @param {object|null} police  the patrol dispatch's status (game/police.js)
+     * @param {object|null} status  what the street is saying: the dispatch's status, the wanted
+     *   record, and the job and race in hand (game/game.js builds it; see ui/hud-model.js for the
+     *   fields). Every one of them may be missing, and the HUD draws an empty line for that.
      */
-    update(dt, player, hours, handbrake, nitrous, police) {
+    update(dt, player, hours, handbrake, nitrous, status) {
       const vehicle = player.vehicle;
       values.speed = Math.abs(vehicle.speed);
       values.rpm = vehicle.rpm;
@@ -62,7 +69,15 @@ export function createHudFeed({ ui, world }) {
       values.position[0] = player.pos[0]; values.position[1] = player.pos[1]; values.position[2] = player.pos[2];
       values.nitrous = nitrous.level;
       values.boosting = nitrous.boosting;
-      values.police = police || null;
+      // The status object is passed out field by field, not whole: the HUD's view model looks for
+      // `input.police`, `input.wanted` and the rest beside it, and handing it the bag they came in
+      // leaves every one of those lines empty — a wanted level the driver cannot see is a feature
+      // that does not exist, however correct the ledger behind it is.
+      values.police = (status && status.police) || null;
+      values.wanted = (status && status.wanted) || null;
+      values.race = (status && status.race) || null;
+      values.mission = (status && status.mission) || null;
+      values.net = (status && status.net) || null;
       districtTimer -= dt;
       if (districtTimer <= 0) {
         districtTimer = DISTRICT_INTERVAL;

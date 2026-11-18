@@ -144,6 +144,7 @@ export function createTouchControls({ doc, parent, actions }) {
 
   const root = el(doc, 'div', 'touch',
     el(doc, 'div', 'touch__taps',
+      tapButton('touch__tap--race', 'flag', 'Street race', () => { if (actions.press) actions.press('race'); }),
       tapButton('touch__tap--camera', 'camera', 'Change camera', () => { if (actions.press) actions.press('camera'); }),
       tapButton('touch__tap--pause', 'pause', 'Pause', () => { if (actions.pause) actions.pause(); })),
     steer,
@@ -164,6 +165,19 @@ export function createTouchControls({ doc, parent, actions }) {
     /** Releases every control and tells the game once if anything was held. */
     reset() {
       for (const release of releases) release();
+    },
+
+    /**
+     * Whether a street race can be taken from where the car is standing: the button greys out, and says
+     * what it is for, when there is nothing to take. (game.js feeds it from races.offer().)
+     */
+    setRaceOffer(offer) {
+      const button = root.querySelector('.touch__tap--race');
+      if (!button) return;
+      const on = !!offer;
+      button.classList.toggle('is-ready', on);
+      button.disabled = !on;
+      button.setAttribute('aria-label', on ? `Street race: ${offer.tier ? offer.tier.name : 'on offer here'}` : 'No street race from here');
     },
 
     setActive(on) {

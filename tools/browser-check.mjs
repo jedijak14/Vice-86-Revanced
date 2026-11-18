@@ -11,6 +11,8 @@
 //   --minutes  how long to watch (default 4)
 //   --heat     order an incident after a minute of driving, 1..3; 0 leaves the game alone
 //   --traffic  the traffic setting 0..3 (default 2)
+//   --race     0 to leave the street races alone, 1 to start one (default 1)
+//   --drive    1 to keep the car moving and steering for the whole check (default 0: drive, brake, stop)
 //   --quality  low | medium | high | ultra (default low)
 //   --seed     simulation seed (default 7)
 //   --chromium path to the Chromium executable (default $CHROMIUM_PATH or /tmp/chromium)
@@ -38,6 +40,8 @@ const heat = Math.max(0, Math.min(3, Number(opt('heat', 2)) || 0));
 const traffic = Math.max(0, Math.min(3, Number(opt('traffic', 2)) || 0));
 const quality = opt('quality', 'low');
 const seed = Number(opt('seed', 7)) | 0;
+const race = Math.max(0, Math.min(1, Number(opt('race', 1)) | 0));
+const drive = Math.max(0, Math.min(1, Number(opt('drive', 0)) | 0));
 const executablePath = opt('chromium', process.env.CHROMIUM_PATH || '/tmp/chromium');
 const shot = opt('shot', '/tmp/vice-police.png');
 const require = createRequire(import.meta.url);
@@ -75,6 +79,10 @@ const read = () => page.evaluate(() => {
   const hud = document.querySelector('.hud__police');
   const p = window.__vice.police();
   const s = window.__vice.stats();
+  const stars = document.querySelectorAll('.hud__star.is-on').length;
+  const row = document.querySelector('.hud__row.is-on');
+  const race = window.__vice.race ? window.__vice.race() : null;
+  const board = race && race.board;
   return {
     phase: window.__vice.phase,
     ready: window.__vice.ready,
@@ -82,10 +90,24 @@ const read = () => page.evaluate(() => {
     engine: window.__vice.engine,
     car: window.__vice.car(),
     police: p,
-    hud: hud ? { text: hud.textContent.trim(), on: hud.classList.contains('is-on'), pips: hud.querySelectorAll('.hud__police-pip.is-on').length } : null,
+    hud: hud ? { text: hud.textContent.trim(), on: hud.classList.contains('is-on'), pips: stars } : null,
+    hudLine: ['mission', 'race', 'crew'].reduce((out, n) => {
+      const e = document.querySelector(`.hud__${n}-text`);
+      if (e && e.textContent.trim()) out[n] = e.textContent.trim();
+      return out;
+    }, {}),
     engineLine: (() => { const n = document.querySelector('.wordmark__engine'); return n ? n.textContent.trim() : null; })(),
     stats: { fps: s.fps, traffic: s.traffic, parked: s.parked, tiles: s.tilesLoaded, pending: s.tilesPending },
     gpu: s.renderer || s.gpu || null,
+    // The street's own population and the record, both read from the game rather than the DOM, plus
+    // what the HUD actually rendered: a row that never lights up is a feature that does not exist.
+    wanted: window.__vice.wanted ? window.__vice.wanted() : null,
+    crowd: window.__vice.crowd ? window.__vice.crowd() : null,
+    hudStars: stars,
+    hudStarTotal: document.querySelectorAll('.hud__star').length,
+    hudRow: row ? row.textContent.trim() : '',
+    hudRows: [...document.querySelectorAll('.hud__row')].filter((e) => e.classList.contains('is-on')).length,
+    race: board ? { active: board.active, finished: board.finished, gates: board.total, passed: board.passed, ms: board.elapsedMs, name: board.name, offer: race.offer ? race.offer.tier.name : null } : null,
   };
 });
 
@@ -98,6 +120,10 @@ try {
 }
 
 let peak = 0, officers = 0, ordered = false, last = '';
+let raced = false, raceRead = false, driveStep = 0;
+const driveOn = drive > 0;
+const raceOn = race > 0;
+let since0 = 0;
 const deadline = t0 + minutes * 60_000;
 while (Date.now() < deadline && reached) {
   const s = await read();
@@ -109,6 +135,26 @@ while (Date.now() < deadline && reached) {
     const line = `heat ${p.heat} ${p.mode}, ${p.responding}/${p.units.length} responding, ${p.officers} on foot, nearest unit ${Math.round(near)} m, ${s.stats.traffic} cars, ${Math.round(s.car.speed * 3.6)} km/h, hud "${s.hud && s.hud.text}" ${s.hud && s.hud.on ? 'on' : 'off'}`;
     if (line !== last) { last = line; log(line); }
   }
+  // A race is taken from the kerb, so the check has to be standing where one can be laid: the game
+  // refreshes the offer about once a second of driving, and the start uses whatever it found.
+  if (!raced && raceOn && since0 > 90_000) {
+    const offer = await page.evaluate(() => window.__vice.race().offer);
+    if (offer) {
+      raced = true;
+      log('starting a street race:', offer.tier && offer.tier.name);
+      await page.evaluate((tier) => window.__vice.startRace(tier), (offer.tier && offer.tier.id) || 'local');
+    } else if (since0 > 150_000) {
+      raced = true;
+      errors.push('the street never offered a race from the kerb');
+    }
+  }
+  if (raced && !raceRead && since0 > 150_000) {
+    raceRead = true;
+    const b = await page.evaluate(() => window.__vice.race().board);
+    log('race board', JSON.stringify({ active: b.active, gates: b.total, passed: b.passed, place: b.place, of: b.field, ms: Math.round(b.elapsedMs), next: b.toNext }));
+    if (!b.active && !b.finished) errors.push('the race stopped being a race');
+    await page.evaluate(() => window.__vice.abortRace());
+  }
   if (!ordered && heat > 0 && Date.now() - t0 > 60_000) {
     ordered = true;
     log(`ordering an incident at level ${heat}`);
@@ -117,8 +163,16 @@ while (Date.now() < deadline && reached) {
   // Throttle, then the brake, then nothing at all: the point is to be seen doing something while
   // an officer can see it, and then to sit still with a unit behind you, which is the shape of a
   // traffic stop. Holding the brake any longer would drive the car backwards out of its own stop.
+  // With --drive the car is kept moving for the whole check, and steered in long sweeps: a moving car
+  // is the only way the crowd gets close enough to grow limbs, and the only way a street race, a red
+  // light and a speeding charge can happen by themselves rather than being ordered.
   const since = Date.now() - t0;
-  const pedal = since < 45_000 ? { throttle: 1 } : since < 75_000 ? { brake: 0.7 } : null;
+  since0 = since;
+  if (driveOn) driveStep = (driveStep + 1) % 240;
+  const steer = driveOn ? (driveStep < 70 ? 0.55 : driveStep < 150 ? -0.7 : 0) : 0;
+  const pedal = driveOn
+    ? { throttle: 0.9, steer }
+    : since < 45_000 ? { throttle: 1 } : since < 75_000 ? { brake: 0.7 } : null;
   await page.evaluate((axis) => window.__vice.input(axis), pedal);
   await page.waitForTimeout(1_500);
 }
@@ -126,7 +180,14 @@ await page.evaluate(() => window.__vice.input(null));
 
 const final = reached ? await read() : null;
 if (final) {
-  log('final', JSON.stringify({ phase: final.phase, ready: final.ready, engine: final.engine, engineLine: final.engineLine, police: final.police && { ...final.police, units: final.police.units.length }, hud: final.hud, stats: final.stats }));
+  log('final', JSON.stringify({ phase: final.phase, ready: final.ready, engine: final.engine, engineLine: final.engineLine, police: final.police && { ...final.police, units: final.police.units.length }, crowd: final.crowd, wanted: final.wanted, hudStars: final.hudStars, hudLine: final.hudLine, hudRow: final.hudRow, race: final.race, hudStarTotal: final.hudStarTotal, hudRows: final.hudRows, hud: final.hud, stats: final.stats }));
+  // The street has to be *inhabited*: a crowd of zero at traffic 2 is a bug, not a quiet evening.
+  if (final.crowd && traffic > 0 && final.crowd.peds === 0 && final.phase === 'driving') warnings.push(`nobody on the pavements (${JSON.stringify(final.crowd)})`);
+  // Limbs are the visible part of the rig: with a moving car and medium quality somebody has to have them.
+  if (driveOn && final.crowd && final.crowd.peds > 4 && final.crowd.articulated === 0) warnings.push(`nobody has limbs (${JSON.stringify(final.crowd)})`);
+  if (final.crowd && final.crowd.streets === 0) warnings.push('the crowd found no street to walk on');
+  if (final.wanted && final.wanted.stars > 0 && final.hudStars === 0 && minutes >= 1) warnings.push(`the ledger says ${final.wanted.stars} stars and the HUD shows none`);
+  if (final.hudStarTotal !== 5 && final.hudStarTotal !== 0) warnings.push(`the HUD built ${final.hudStarTotal} star slots`);
   log('peak heat', peak, '| officers out at some point:', officers);
   try {
     await page.screenshot({ path: shot, timeout: 180_000, animations: 'disabled' });
