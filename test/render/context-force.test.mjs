@@ -61,7 +61,7 @@ test('forcing past a missing capability runs, at the lowest tier, and says so', 
   assert.ok(ctx.gl, 'a context came back');
   assert.equal(ctx.forced, true);
   assert.equal(ctx.floatTargets, false);
-  assert.equal(ctx.caps.tierHint, 'low', 'a forced device starts at the bottom and climbs from there');
+  assert.equal(ctx.caps.tierHint, 'ultraLow', 'a forced device starts at the bottom rung and climbs from there');
   assert.equal(warns.length, 1);
   assert.match(warns[0], /WebGL2 was forced past/);
   assert.match(warns[0], /float render targets/);

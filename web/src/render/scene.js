@@ -158,6 +158,23 @@ export class Scene {
     return handle;
   }
 
+  /**
+   * Re-upload a mesh's vertex bytes from the copy it kept, for a mesh whose vertices are rewritten every
+   * frame: a skinned person, a flag, a deformable thing. The mesh keeps its CPU copy (`retain`), so this
+   * is a bufferSubData of the same bytes rather than a rebuild, and the index buffer is untouched.
+   */
+  refreshMesh(handle, from = 0, to = null) {
+    const mesh = this._mesh(handle, 'refreshMesh');
+    if (!mesh.data || !mesh.vbo) return false;
+    const gl = this.ctx.gl;
+    const bytes = mesh.data.vertices;
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.vbo);
+    if (from === 0 && to === null) gl.bufferSubData(gl.ARRAY_BUFFER, 0, bytes);
+    else gl.bufferSubData(gl.ARRAY_BUFFER, from, new Uint8Array(bytes, from, (to === null ? bytes.byteLength : to) - from));
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return true;
+  }
+
   destroyMesh(handle) {
     const mesh = this.meshes[handle], gl = this.ctx.gl;
     if (!mesh) return;

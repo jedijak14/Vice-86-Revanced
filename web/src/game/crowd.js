@@ -2,8 +2,9 @@
 //
 // A street with nobody walking on it is a car park with palm trees. The release ships traffic, parked
 // cars, lamps and birds, and no pedestrians — so this adds them, on the terms everything else in the
-// fork is added: the lane graph says where the pavements are, the traffic geometry kit makes the
-// bodies (world/people/body.js), world/people/rig.js poses them, and nothing here has a collider, a
+// fork is added: the lane graph says where the pavements are, the vendored models say what a body looks
+// like (world/people/cast.js, and web/assets/models with its licence manifest), and nothing here has a
+// collider, a
 // kinematic body or an opinion about the player's car. A crowd you could not drive through would be
 // wrong in a world with real physics, so instead the crowd *answers* the car: it stops, turns to look
 // and steps back from anything that comes at it on the wrong side of the kerb, and the police notice
@@ -19,8 +20,7 @@
 
 import { m4fromYawPos, clamp, lerp, makeRng, hash01, TAU } from '../core/math.js';
 import { samplePoint, laneYaw } from './lanes.js';
-import { PARTS, PART_BONE, boneIndex, boneMatrices, createPose, walkPose, idlePose, hailPose, startlePose, blendPose } from '../world/people/rig.js';
-import { buildPersonWhole, buildPersonMeshes, buildSeatedPassenger, OUTFITS, SKIN_TONES } from '../world/people/body.js';
+import { newPerson, WARDROBE } from '../world/people/cast.js';
 import { Sample } from '../world/plan/field.js';
 import { MeshBuilder } from '../core/mesh.js';
 import { Skin } from '../vehicles/traffic/skin.js';
@@ -30,7 +30,16 @@ import * as mt from '../vehicles/traffic/materials.js';
 /** Metres: how far from the player a person is kept at all. */
 export const CROWD_KEEP = 132;
 /** Metres: within this, a person gets their own limbs and a walk cycle. */
-export const ARTICULATE_AT = 26;
+/**
+ * How far a person is worth animating: within this radius somebody is drawn from their model, with a rig
+ * that moves; outside it they are not drawn at all. A pedestrian at 40 m is a dozen pixels tall, and what
+ * the street used to put there instead -- a box, walking -- is the thing this whole file replaced.
+ */
+export const ARTICULATE_AT = 34;
+/** The radius a body will be carried past rather than leaving the street without one (see `step`). */
+export const ARTICULATE_FAR = 96;
+/** The ring new people are put down in: near enough that the street is inhabited where you are looking. */
+export const SPAWN_NEAR = 58;
 /** Seconds a person at a corner keeps waving before they give up on the traffic. */
 export const HAIL_PATIENCE = 26;
 /** The odds, per six seconds of waiting, that somebody decides they need a cab. */
@@ -51,13 +60,14 @@ const STRIDE_METRES = 1.34;
 /** How many people, and how many of them with limbs, at each traffic density the settings offer. */
 export const CROWD_BY_DENSITY = Object.freeze([
   { peds: 0, articulated: 0 },
-  { peds: 14, articulated: 2 },
-  { peds: 30, articulated: 4 },
-  { peds: 48, articulated: 7 },
+  { peds: 14, articulated: 6 },
+  { peds: 30, articulated: 10 },
+  { peds: 48, articulated: 14 },
 ]);
 
 /** The same table by graphics preset: a slow machine spends its draw calls elsewhere. */
-export const ARTICULATE_CAP = Object.freeze({ low: 0, medium: 4, high: 7, ultra: 12 });
+/** How many bodies are animated at once, per quality tier: a rigged person costs a skin solve every frame. */
+export const PEOPLE_BY_TIER = Object.freeze({ ultraLow: 2, low: 5, medium: 9, high: 13, ultra: 18 });
 
 /**
  * Where the pavement is beside one lane, at one station, on one side.
@@ -98,7 +108,6 @@ export function threat(d, speed, toward) {
 }
 
 /** Two poses to blend the walk and the standing still with, reused per person. */
-const stridePose = createPose(), standPose = createPose(), mixedPose = createPose();
 
 /**
  * @param {object} options
@@ -109,7 +118,7 @@ const stridePose = createPose(), standPose = createPose(), mixedPose = createPos
  * @param {number} [options.land]       the height of the flat street level
  * @param {(k: number) => void} [options.onEndanger] called with 0..1 when a car frightens somebody
  */
-export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEndanger = null } = {}) {
+export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEndanger = null, people: cast = null, quality = 'medium' } = {}) {
   const rng = makeRng(seed | 0);
   const lanes = graph && graph.lanes ? graph.lanes : [];
   const walkable = [];
@@ -132,37 +141,52 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   const people = [], spare = [];
   const scratch = [0, 0, 0];
   const car = { x: 0, z: 0, y: 0, yaw: 0, speed: 0 };
-  let whole = null, outfits = null, passengerMesh = -1, mark = -1, failed = false;
+  let mark = -1, failed = false, qualityTier = quality;
+  const idlePeople = [];                       // built bodies, parked: see takePerson and handPersonBack
 
-  /** The meshes: one whole-body LOD per outfit, the seven parts per outfit, made once. */
-  function ensureMeshes() {
-    if (whole || failed) return !failed;
-    try {
-      whole = OUTFITS.map((outfit, i) => renderer.createMesh(buildPersonWhole(outfit, i, 0.25), { retain: true }));
-      outfits = OUTFITS.map((outfit, i) => ({ mesh: buildPersonMeshes(outfit, i), handles: null }));
-      passengerMesh = renderer.createMesh(buildSeatedPassenger(OUTFITS[1], 1), { retain: true });
-      mark = renderer.createMesh(buildHailMark(), { retain: true });
-    } catch (error) {
-      failed = true;
-      console.error('The crowd could not be uploaded to the renderer', error);
-    }
-    return !failed;
+  /** The one mesh that is not a person: the card a hailer holds up. */
+  function ensureMark() {
+    if (mark >= 0 || failed) return mark >= 0;
+    try { mark = renderer.createMesh(buildHailMark(), { retain: true }); }
+    catch (error) { failed = true; console.error('The crowd could not be uploaded to the renderer', error); }
+    return mark >= 0;
   }
 
-  /** The parts of one outfit, uploaded the first time somebody near the camera is worth limbs. */
-  function ensureParts(outfit) {
-    if (!ensureMeshes()) return null;
-    const entry = outfits[outfit];
-    if (!entry.handles) {
-      const handles = {};
-      for (const name in entry.mesh) handles[name] = renderer.createMesh(entry.mesh[name], { retain: true });
-      entry.handles = handles;
+  /**
+   * A body for one person: the same character and tint as last time if one is parked, because building a
+   * person means uploading a few thousand vertices and nobody should pay that every time a pedestrian
+   * drifts in and out of the animation radius.
+   */
+  function takePerson(p) {
+    if (!cast || !cast.characters || !cast.characters.length) return null;
+    const key = `${p.character}/${p.wardrobe}`;
+    for (let i = 0; i < idlePeople.length; i++) {
+      if (idlePeople[i].key === key) return idlePeople.splice(i, 1)[0].person;
     }
-    return entry.handles;
+    try {
+      return newPerson(renderer, cast, cast.characters[p.character % cast.characters.length], {
+        wardrobe: WARDROBE[p.wardrobe % WARDROBE.length], seed: p.id,
+      });
+    } catch (error) {
+      if (!failed) console.error('A pedestrian could not be built from the vendored models', error);
+      failed = true;
+      return null;
+    }
+  }
+
+  function handPersonBack(p) {
+    const person = p.person;
+    if (!person) return;
+    p.person = null;
+    if (failed) { person.remove(); return; }
+    person.visible(false);
+    if (idlePeople.length < 24) idlePeople.push({ key: `${p.character}/${p.wardrobe}`, person });
+    else person.remove();
   }
 
   /** Where a person is: their station on their lane, pushed out to the pavement. */
   function where(p, out = [0, 0, 0]) {
+    if (!p.lane) { out[0] = p.x; out[1] = land; out[2] = p.z; return out; }   // parked, not walking
     samplePoint(p.lane, p.s, out);
     const yaw = laneYaw(p.lane, p.s);
     out[0] += -Math.cos(yaw) * p.side * p.off;
@@ -211,7 +235,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
 
   let clock = 0;
 
-  function place(p, px, pz, radius) {
+  function place(p, px, pz, radius, near = SPAWN_NEAR) {
     if (!live) return false;
     const pool = nearLanes(px, pz, radius, clock);
     for (let tries = 0; tries < 24; tries++) {
@@ -223,11 +247,14 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       if (!spot) continue;
       const x = scratch[0] + -Math.cos(spot.yaw) * side * spot.off, z = scratch[2] + Math.sin(spot.yaw) * side * spot.off;
       const dist = Math.hypot(x - px, z - pz);
-      if (dist > radius || dist < 14) continue;             // not under the player's wheels, not at the horizon
+      // Not under the player's wheels, and not at the horizon either: the ring a person may appear in is
+      // the one the camera can actually reach, `near` (game.js re-asks at the full keep radius if this
+      // stretch of street has nothing that close, which is what an empty pavement looks like).
+      if (dist > near || dist < 14) continue;
       p.lane = lane; p.s = s; p.side = side; p.off = spot.off + hash01(p.id, 17) * (spot.room - 1.1);
       p.dir = rng.next() < 0.5 ? 1 : -1;
-      p.outfit = rng.int(0, OUTFITS.length - 1);
-      p.tone = rng.int(0, SKIN_TONES.length - 1);
+      p.character = cast && cast.characters ? rng.int(0, cast.characters.length - 1) : 0;
+      p.wardrobe = rng.int(0, WARDROBE.length - 1);
       p.walk = 1.05 + hash01(p.id, 3) * 0.7;
       p.phase = hash01(p.id, 5);
       p.state = 'walk'; p.hold = 0; p.threat = 0; p.hailing = 0; p.look = 0;
@@ -237,8 +264,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   }
 
   function detach(p) {
-    if (p.obj) { for (const o of p.obj) o.remove(); p.obj = null; }
-    if (p.whole) { p.whole.remove(); p.whole = null; }
+    handPersonBack(p);
     if (p.mark) { p.mark.remove(); p.mark = null; }
     p.articulated = false;
   }
@@ -264,7 +290,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   /** The mark is worn by the person rather than kept in a list of its own: a pedestrian who leaves the
    *  street takes the sign with them, which is the only way a corner ends up without a hail over it. */
   function drawMark(p, moving) {
-    if (mark < 0) return;
+    if (!ensureMark()) return;
     if (!p.mark) {
       p.mark = renderer.addDynamic({ mesh: mark, castShadow: false, blend: true });
       if (!p.mark) return;
@@ -286,51 +312,62 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     spare.push(p);
   }
 
-  function acquire(px, pz, radius) {
+  function acquire(px, pz, radius, near) {
     const p = spare.pop() || {
-      id: ++serial, lane: null, s: 0, side: 1, off: 1.2, dir: 1, walk: 1.2, outfit: 0, tone: 0,
+      id: ++serial, lane: null, s: 0, side: 1, off: 1.2, dir: 1, walk: 1.2,
       phase: 0, x: px, z: pz, yaw: 0, state: 'walk', clock: 0, hold: 0, threat: 0, think: 0, hailClock: 0, patience: 0,
-      hailing: 0, look: 0, obj: null, whole: null, mark: null, articulated: false, pose: createPose(),
-      bones: [], root: new Float32Array(3),
+      hailing: 0, look: 0, person: null, mark: null, articulated: false, character: 0, wardrobe: 0,
     };
-    return place(p, px, pz, radius) ? p : null;
+    return place(p, px, pz, radius, near) ? p : null;
   }
 
-  /** Limbs for the few the camera can read: one dynamic object per drawn part. */
+  /** A real body, from the vendored models, for the few the camera can read. */
   function promote(p) {
-    const handles = ensureParts(p.outfit);
-    if (!handles) return false;
-    p.obj = PARTS.map((name) => {
-      const o = renderer.addDynamic({ mesh: handles[name], castShadow: true });
-      o.visible = false; o.part = name;
-      return o;
-    });
+    if (!p.person) p.person = takePerson(p);
+    if (!p.person) return false;
+    p.person.visible(true);
     p.articulated = true;
-    if (p.whole) { p.whole.remove(); p.whole = null; }
     return true;
   }
 
-  /** Back to one mesh for the rest of the street. */
+  /** Out of the animation radius: the body goes back on the shelf, the person stays on the street. */
   function demote(p) {
-    if (p.obj) { for (const o of p.obj) o.remove(); p.obj = null; }
+    if (p.person) handPersonBack(p);
     p.articulated = false;
-    if (!p.whole && whole) {
-      p.whole = renderer.addDynamic({ mesh: whole[p.outfit], castShadow: false });
-      p.whole.visible = false;
-    }
   }
 
   const crowd = {
     enabled: true,
+    /** Whether the models are in: `false` means the street is walking about unseen, which is a defect. */
+    get castReady() { return !!cast; },
+    /** The cast arrives after boot (the models are a download); the crowd draws nobody until it does. */
+    setCast(next) {
+      for (const parked of idlePeople) parked.person.remove();
+      idlePeople.length = 0;
+      cast = next;
+    },
+    /** The quality tier, which is what decides how many bodies may be animated at once. */
+    setQuality(preset) { qualityTier = preset || 'medium'; },
     density: 1,
     /** Placement attempts that found nowhere to walk: reported so that a street of a hundred lanes
      * holding four people is a number you can read, not a mystery (open land, a bridge, sea). */
     misses: 0,
     articulated: 0,
+    /** Bodies currently in hand (drawn or parked on the shelf). */
+    bodies() { return people.reduce((n, p) => n + (p.person ? 1 : 0), 0) + idlePeople.length; },
+    /**
+     * What the crowd put in front of the camera on the last frame it drew. A tool needs this because
+     * `articulated: 1` alone cannot say whether that one body reached the renderer with triangles in it,
+     * which is the difference between a quiet street and a crowd that quietly failed to load.
+     */
+    rendered: 0, triangles: 0,
+    renderStats() { return { rendered: crowd.rendered, triangles: crowd.triangles }; },
     passenger: null,
     get count() { return people.length; },
     /** The people themselves, for a mission that wants to put somebody somewhere on purpose. */
     get people() { return people; },
+    /** Where a person is standing, as the crowd sees it (their lane, their station, their kerb side). */
+    at(p, out = [0, 0, 0]) { return where(p, out); },
     get live() { return live; },
 
     /** How many people, from the traffic the player asked for, and the preset's own cap on limbs. */
@@ -346,7 +383,11 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     reset() {
       while (people.length) retire(people.pop());
       crowd.articulated = 0;
-      if (crowd.passenger) { crowd.passenger.obj.remove(); crowd.passenger = null; }
+      if (crowd.passenger) { handPersonBack(crowd.passenger); crowd.passenger = null; }
+      // A reset is the street being thrown away -- a new game, another island, the garage. The parked
+      // bodies go with it: a shelf of meshes for a crowd that no longer exists is a leak with a lid on it.
+      for (const parked of idlePeople) parked.person.remove();
+      idlePeople.length = 0;
     },
 
     /**
@@ -368,11 +409,23 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       // A spot that is not walkable is a miss, not a stop: a road whose pavement turns out to be sea,
       // or a carriageway the plan has not streamed yet, must not leave the street empty for a minute.
       for (let n = 0, tries = 0; n < batch && tries < batch * 4; tries++) {
-        const p = acquire(car.x, car.z, CROWD_KEEP);
+        // The first ask is for the ring the camera is in; past a few tries the street is allowed to hand
+        // out a pavement further off, because a crowd that only ever appears next to you reads as a magic
+        // trick, and a queue of people waiting 90 m away to walk into frame is the street.
+        const p = acquire(car.x, car.z, tries > 3 ? CROWD_KEEP : SPAWN_NEAR);
         if (p) { people.push(p); n++; }
       }
-      let limbs = Math.min(cap, CROWD_BY_DENSITY[density].articulated);
+      // A rigged body is not free, so the tier says how many the street may animate at once
+      // (`cap`, handed over with the preset by game.js) and the density says how many more are walking
+      // about unseen. Bodies are not handed out by a queue: a person out of reach loses theirs to whoever
+      // is nearer, and a body already held is a slot spent before this frame decides anything — that is
+      // what makes `cap` a cap on what is animated rather than on what may be promoted.
+      let limbs = cast ? Math.min(cap, CROWD_BY_DENSITY[density].articulated + 6) : 0;
+      let held = 0;
+      for (const p of people) if (p.articulated) held++;
+      limbs = Math.max(0, limbs - held);
       crowd.articulated = 0;
+      crowd.rendered = 0; crowd.triangles = 0;   // this frame's draw tally, recounted below
       for (let i = people.length - 1; i >= 0; i--) {
         const p = people[i];
         const w = where(p, scratch);
@@ -380,12 +433,20 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
         const d = Math.hypot(p.x - car.x, p.z - car.z);
         if (d > CROWD_KEEP) { retire(p); people.splice(i, 1); continue; }
         crowd.think(p, dt, d);
-        if (d < ARTICULATE_AT && limbs > 0) {
-          if (!p.articulated) promote(p);
-          if (p.articulated) { limbs--; crowd.articulated++; }
-          else ensureWhole(p);
-        } else if (p.articulated) demote(p);
-        else ensureWhole(p);
+        // Inside the animation radius a body is worth it. Outside it one is handed out only when the
+        // street would otherwise have none at all — a pavement of invisible people is the failure a player
+        // notices, and one distant figure is worth more than a crowd you cannot see.
+        const near = d < ARTICULATE_AT;
+        const lonely = !crowd.articulated && d < ARTICULATE_FAR;
+        if (p.articulated) {
+          // Hysteresis: a held body is given up only past the wider ring, so a person standing on the
+          // boundary is not trading a mesh with the shelf every other frame.
+          if (near || (d < ARTICULATE_AT * 1.35 && crowd.articulated <= cap)) {
+            crowd.articulated++; if (limbs > 0) limbs--;
+          } else demote(p);
+        } else if ((near || lonely) && limbs > 0) {
+          if (promote(p)) { limbs--; crowd.articulated++; }
+        }
         crowd.draw(p, dt, d);
       }
       crowd.drawPassenger();
@@ -440,34 +501,28 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       }
     },
 
+    /**
+     * What a state of the street looks like on a body. The names are the cast's roles, which are the
+     * vendored clips: `walk` is KayKit's Walking_A, and one cycle of it is one stride, so the feet land
+     * where the pavement says they should rather than where the clock says.
+     */
+    roleFor(p) {
+      if (p.state === 'walk') return p.walk > 1.55 ? 'run' : 'walk';
+      if (p.state === 'startle') return 'startle';
+      return null;
+    },
+
     draw(p, dt, d) {
       const moving = p.state === 'walk' ? 1 : 0;
-      // The walk and the standing still are the same rig; the street blends between them.
-      walkPose(stridePose, p.phase, p.walk);
-      idlePose(standPose, p.clock);
-      // Standing first, then as much of the stride as the person is actually walking: one blend, so a
-      // person coming to a stop settles into the stand rather than snapping to it.
-      blendPose(mixedPose, standPose, 1);
-      blendPose(mixedPose, stridePose, moving);
-      if (p.state === 'startle') startlePose(mixedPose, 1);
-      if (p.hailing > 0) hailPose(mixedPose, p.hailClock || 0);
-      mixedPose.look = p.look;
-      blendPose(p.pose, mixedPose, clamp(dt * 8, 0, 1));
-      p.pose.look = lerp(p.pose.look, p.look, clamp(dt * 3, 0, 1));
       const yaw = p.yaw || laneYaw(p.lane, p.s);
-      if (p.articulated) {
-        p.root[0] = p.x; p.root[1] = p.z; p.root[2] = yaw;
-        boneMatrices(p.pose, p.root, p.bones, land);
-        for (let i = 0; i < p.obj.length; i++) {
-          const o = p.obj[i], bone = p.bones[boneIndex(PART_BONE[o.part])];
-          if (!bone) { o.visible = false; continue; }
-          o.matrix.set(bone);
-          o.visible = true;
-        }
-      } else if (p.whole) {
-        const dip = Math.sin(p.phase * TAU * 2) * 0.022 * moving;
-        m4fromYawPos(p.whole.matrix, yaw, p.x, land + dip, p.z, 1);
-        p.whole.visible = true;
+      const person = p.person;
+      if (person) {
+        person.place(p.x, land, p.z, yaw);
+        const role = crowd.roleFor(p);
+        if (role) person.role(role);
+        if (p.hailing > 0) person.role('wave', { upper: true });
+        person.frame(dt, moving ? p.walk * dt : 0);
+        crowd.rendered++; crowd.triangles += (person.stats && person.stats.triangles) || 0;
       }
       // Only somebody actually waving gets a mark: a street of cards is a street of noise, and a fare is
       // worth finding precisely because the person wanting it is the one holding it up.
@@ -478,11 +533,18 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     /** The fare in the back seat rides with the car, not with the world. */
     drawPassenger() {
       const seat = crowd.passenger;
-      if (!seat || !seat.obj) return;
-      // A step to the left of the driver, the way a 1986 saloon's front bench takes a second person.
+      if (!seat) return;
+      if (!seat.person) seat.person = takePerson(seat);
+      const person = seat.person;
+      if (!person) return;
+      // A step to the left of the driver, the way a 1986 saloon's front bench takes a second person, and
+      // the seated clip: a fare with straight legs down in the footwell is a bug wearing a body.
       const x = car.x + Math.cos(car.yaw) * 0.42, z = car.z - Math.sin(car.yaw) * 0.42;
-      m4fromYawPos(seat.obj.matrix, car.yaw, x, car.y + 0.02, z, 1);
-      seat.obj.visible = true;
+      person.place(x, car.y + 0.02, z, car.yaw);
+      person.role('sit');
+      person.frame(0, 0);
+      crowd.rendered++; crowd.triangles += (person.stats && person.stats.triangles) || 0;
+      person.visible(true);
     },
 
     /** The nearest person to a point, waving or not — a street job wants a body to send somewhere. */
@@ -520,19 +582,21 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
 
     /** Somebody into the back seat: they stop being a pedestrian and become a passenger. */
     board(p) {
-      if (!p || !ensureMeshes()) return null;
-      const obj = renderer.addDynamic({ mesh: passengerMesh, castShadow: false });
-      crowd.passenger = { p, obj, outfit: p.outfit };
+      if (!p) return null;
+      // The fare keeps their character and their tint: a passenger who changed clothes on the way to the
+      // car would be a rendering bug, not a costume change.
+      const seat = { p, person: null, character: p.character, wardrobe: p.wardrobe };
+      crowd.passenger = seat;
       const i = people.indexOf(p);
       if (i >= 0) { detach(p); people.splice(i, 1); spare.push(p); }
-      return crowd.passenger;
+      return seat;
     },
 
     /** And back onto the pavement, where they were asked to be. */
     alight(x, z) {
       const seat = crowd.passenger;
       if (!seat) return null;
-      if (seat.obj) seat.obj.remove();
+      if (seat.person) handPersonBack(seat);
       crowd.passenger = null;
       const p = seat.p;
       if (!p.lane) { if (!place(p, x, z, 40)) return p; }
@@ -545,7 +609,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       let hailing = 0, startled = 0;
       for (const p of people) { if (p.hailing) hailing++; if (p.threat > 0.3) startled++; }
       return {
-        peds: people.length, articulated: crowd.articulated, density, hailing, startled,
+        peds: people.length, articulated: crowd.articulated, cast: !!cast, bodies: crowd.bodies(), density, hailing, startled,
         passenger: !!crowd.passenger,
         // What the crowd has to work with: the streets it was offered, and the ones near the car now.
         streets: nearby.length, walkable: walkable.length, misses: crowd.misses,
@@ -553,11 +617,6 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     },
   };
 
-  function ensureWhole(p) {
-    if (p.whole || p.articulated || !whole) return;
-    p.whole = renderer.addDynamic({ mesh: whole[p.outfit], castShadow: false });
-    p.whole.visible = false;
-  }
 
   return crowd;
 }

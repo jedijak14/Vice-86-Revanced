@@ -288,8 +288,8 @@ export function classifyRenderer(raw) {
 
 // ---------------------------------------------------------------- detection
 
-/** Score a preset needs on a 1080p screen. Low needs nothing. */
-export const PRESET_MIN_SCORE = Object.freeze({ low: 0, medium: 5, high: 14, ultra: 27 });
+/** Score a preset needs on a 1080p screen. Ultra Low needs nothing: it is the floor Auto can fall to. */
+export const PRESET_MIN_SCORE = Object.freeze({ ultraLow: 0, low: 3, medium: 5, high: 14, ultra: 27 });
 
 const REFERENCE_PIXELS = 1920 * 1080;
 const rank = (preset) => PRESET_NAMES.indexOf(preset);
@@ -345,16 +345,16 @@ export function describeGraphics(caps, env = readEnvironment()) {
     // No usable string (blocked by privacy settings, or a GPU the table has never seen).
     const hint = caps && isPresetName(caps.tierHint) ? caps.tierHint : null;
     const strongHost = !env.touch && env.hardwareConcurrency >= 8 && !(env.deviceMemory < 8);
-    preset = hint || (strongHost ? FALLBACK_PRESET : 'low');
+    preset = hint || (strongHost ? FALLBACK_PRESET : 'ultraLow');
     reasons.push(renderer ? 'Unrecognised graphics device; starting cautiously.' : 'The browser does not reveal the graphics device; starting cautiously.');
   } else {
-    preset = 'low';
+    preset = 'ultraLow';
     for (const name of PRESET_NAMES) {
       if (score >= PRESET_MIN_SCORE[name] * pixelLoad(name, env)) preset = name;
     }
     if (family === 'software') {
-      ceiling = 'low';
-      reasons.push('Software rendering: hardware acceleration is off or unavailable in this browser.');
+      ceiling = 'ultraLow';
+      reasons.push('Software rendering: hardware acceleration is off or unavailable in this browser, so Auto will not go above Ultra Low.');
     } else if (family === 'mobile') {
       ceiling = 'medium';
       reasons.push('Phone or tablet graphics.');
@@ -370,9 +370,9 @@ export function describeGraphics(caps, env = readEnvironment()) {
   }
 
   // Memory and cores bound what the rest of the game (streaming, traffic, physics) can keep up with.
-  if (env.deviceMemory <= 2) { ceiling = lower(ceiling, 'low'); reasons.push('2 GB of memory or less limits Auto to Low.'); }
+  if (env.deviceMemory <= 2) { ceiling = lower(ceiling, 'ultraLow'); reasons.push('2 GB of memory or less limits Auto to Ultra Low.'); }
   else if (env.deviceMemory <= 4) { ceiling = lower(ceiling, 'medium'); reasons.push('4 GB of memory limits Auto to Medium.'); }
-  if (env.hardwareConcurrency <= 2) { ceiling = lower(ceiling, 'low'); reasons.push('Two processor cores or fewer limit Auto to Low.'); }
+  if (env.hardwareConcurrency <= 2) { ceiling = lower(ceiling, 'ultraLow'); reasons.push('Two processor cores or fewer limit Auto to Ultra Low.'); }
   else if (env.hardwareConcurrency <= 4) { ceiling = lower(ceiling, 'high'); reasons.push('Four processor cores limit Auto to High.'); }
 
   preset = lower(preset, ceiling);
@@ -381,14 +381,14 @@ export function describeGraphics(caps, env = readEnvironment()) {
 
 /** Preset by score alone, ignoring the screen. */
 function stepPresetByScore(score) {
-  let preset = 'low';
+  let preset = 'ultraLow';
   for (const name of PRESET_NAMES) if (score >= PRESET_MIN_SCORE[name]) preset = name;
   return preset;
 }
 
 let lastDetected = FALLBACK_PRESET;
 
-/** Starting preset for Auto on this device: 'low' | 'medium' | 'high' | 'ultra'. */
+/** Starting preset for Auto on this device: one of PRESET_NAMES, weakest first from 'ultraLow'. */
 export function detectGraphics(caps, env = readEnvironment()) {
   lastDetected = describeGraphics(caps, env).preset;
   return lastDetected;

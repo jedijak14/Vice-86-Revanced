@@ -6,6 +6,7 @@ const clampNum = (v, lo, hi, fallback) => (Number.isFinite(v) ? Math.min(hi, Mat
 
 /** Field defaults per preset, used for any field the caller leaves out. */
 export const PRESET_DEFAULTS = Object.freeze({
+  ultraLow: { resolutionScale: 0.5, maxPixelRatio: 1, shadows: 0, ao: 0, reflections: 0, antialiasing: 'off', bloom: 0, motionBlur: 0, depthOfField: 0, lights: 0, drawDistance: 0, particles: 0, volumetrics: 0, filmGrain: false, chromaticAberration: false },
   low: { resolutionScale: 0.7, maxPixelRatio: 1, shadows: 1, ao: 0, reflections: 0, antialiasing: 'fxaa', bloom: 1, motionBlur: 0, depthOfField: 0, lights: 0, drawDistance: 0, particles: 0, volumetrics: 0, filmGrain: false, chromaticAberration: false },
   medium: { resolutionScale: 0.85, maxPixelRatio: 1, shadows: 2, ao: 1, reflections: 1, antialiasing: 'taa', bloom: 1, motionBlur: 1, depthOfField: 1, lights: 1, drawDistance: 1, particles: 1, volumetrics: 0, filmGrain: true, chromaticAberration: false },
   high: { resolutionScale: 1, maxPixelRatio: 1.5, shadows: 3, ao: 2, reflections: 2, antialiasing: 'taa', bloom: 2, motionBlur: 2, depthOfField: 2, lights: 2, drawDistance: 2, particles: 2, volumetrics: 1, filmGrain: true, chromaticAberration: true },
@@ -60,8 +61,12 @@ const LIGHTS = [
   { maxLights: 1024, sizeNear: 64, sizeFar: 32, perCell: 32 },
 ];
 const PARTICLES = [{ max: 384 }, { max: 1536 }, { max: 4096 }];
+// What Ultra Low shaves off the bottom of every table, because a level of 0 is already "off" and the
+// preset still has to be cheaper than Low: fewer lights to bin, a smaller grid to bin them in, a
+// shorter shadow and reflection reach, and a particle budget that fits sparks from one crash.
+const ULTRA_LOW = Object.freeze({ maxLights: 64, sizeNear: 24, perCell: 12, particles: 128, reach: 0.55 });
 // Detail level handed to surface families in uQuality.x: micro detail is skipped below 0.5.
-const DETAIL = { low: 0.25, medium: 0.5, high: 0.8, ultra: 1 };
+const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1 };
 
 /**
  * Resolve a graphics settings object into renderer parameters. Unknown or missing fields fall back to
@@ -79,15 +84,17 @@ export function resolveQuality(graphics = {}) {
   const aa = pick('antialiasing'), antialiasing = aa === 'off' || aa === 'fxaa' || aa === 'taa' ? aa : base.antialiasing;
   // The detail hint follows the heaviest visual settings rather than the preset label, so 'custom' works.
   const detail = graphics.preset in DETAIL ? DETAIL[graphics.preset] : [0.25, 0.5, 0.8, 1][Math.round((shadows + reflections + lights) / 3)];
+  const cuts = presetName === 'ultraLow' ? ULTRA_LOW : null;
   return {
     resolutionScale: clampNum(pick('resolutionScale'), 0.5, 1, base.resolutionScale),
     dynamicResolution: graphics.dynamicResolution !== false,
     maxPixelRatio: clampNum(pick('maxPixelRatio'), 1, 2, base.maxPixelRatio),
     frameTarget: graphics.frameCap === 30 ? 1000 / 30 : 1000 / 60,          // ms, target of dynamic resolution
     levels: { shadows, ao, reflections, bloom, motionBlur, depthOfField, lights, particles, drawDistance },
-    shadows: { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3][drawDistance] },
+    shadows: { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3][drawDistance] * (cuts ? ULTRA_LOW.reach : 1) },
     ao: AO[ao], reflections: REFLECTIONS[reflections], bloom: BLOOM[bloom], motionBlur: MOTION_BLUR[motionBlur], depthOfField: DEPTH_OF_FIELD[depthOfField],
-    lights: LIGHTS[lights], particles: PARTICLES[particles],
+    lights: cuts ? { maxLights: cuts.maxLights, sizeNear: cuts.sizeNear, sizeFar: 0, perCell: cuts.perCell } : LIGHTS[lights],
+    particles: cuts ? { max: cuts.particles } : PARTICLES[particles],
     antialiasing,
     volumetrics: clampInt(pick('volumetrics'), 0, 1, base.volumetrics) === 1,
     filmGrain: pick('filmGrain') !== false && pick('filmGrain') !== 0,

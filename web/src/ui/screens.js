@@ -159,7 +159,7 @@ export function buildScreens(ctx) {
   return { title, pause, world, settings: settingsScreen, controls };
 }
 
-const PRESET_LABEL = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
+const PRESET_LABEL = { ultraLow: 'Ultra Low', low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
 
 /**
  * Lines for the device note on the Graphics tab: the GPU name, what Auto chose and on what

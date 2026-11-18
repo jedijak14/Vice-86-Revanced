@@ -9,7 +9,10 @@ import { CARS } from '../vehicles/cars.js';
 import { ENGINE } from '../render/identity.js';
 import { allowedCar } from './garage.js';
 
-const QUALITY_NAMES = ['low', 'medium', 'high', 'ultra'];
+// Query values are matched case-folded, so the one camelCase preset needs to be spelled without its
+// capital here and turned back into the settings vocabulary's name below.
+const QUALITY_NAMES = ['ultralow', 'low', 'medium', 'high', 'ultra'];
+const QUALITY_PRESET = Object.freeze({ ultralow: 'ultraLow', low: 'low', medium: 'medium', high: 'high', ultra: 'ultra' });
 const WEATHER_NAMES = ['clear', 'cloudy', 'overcast', 'rain', 'storm'];
 const CAMERA_NAMES = ['chase', 'bonnet', 'orbit', 'free'];
 
@@ -39,7 +42,7 @@ export function parseOptions(search) {
     time: null,
     weather: oneOf(params.get('weather'), WEATHER_NAMES),
     freeze: flag(params, 'freeze'),
-    quality: oneOf(params.get('quality'), QUALITY_NAMES),
+    quality: QUALITY_PRESET[oneOf(params.get('quality'), QUALITY_NAMES)] || null,
     /**
      * 'force': boot past the renderer's capability checks. Which devices are refused, and what happens
      * when you insist, is documented in render/gl.js (createContext).
@@ -122,6 +125,8 @@ export function createHooks() {
     clearWanted: () => run((g) => g.clearWanted()),
     /** The crowd on the pavements: { peds, articulated, density, hailing, startled, passenger }. */
     crowd: () => (game && game.crowd ? game.crowd : null),
+    /** Whether the crowd's bodies reached the camera: { rendered, triangles } from the last drawn frame. */
+    crowdRender: () => (game && game.crowdRender ? game.crowdRender : null),
     /** Puts a hailer on the nearest kerb to x, z, for a script that wants a fare. */
     hail: (x, z) => run((g) => g.hailAt(x, z)),
     /** Street races: the meeting offered where the car is standing, and the board. */

@@ -57,7 +57,7 @@ export function createContext(canvas, { force = false } = {}) {
     if (caps.maxDrawBuffers < 4) skipped.push(`${caps.maxDrawBuffers} draw buffer(s), 4 wanted`);
     if (relaxedAttrs) skipped.push("the 'high-performance' and desynchronised context attributes");
     console.warn(`WebGL2 was forced past: ${skipped.join(', ')}. The renderer will run as-is on this device and may fail or draw nothing.`);
-    caps.tierHint = 'low';            // whatever the autotuner would have picked, start at the bottom
+    caps.tierHint = 'ultraLow';       // whatever the autotuner would have picked, start at the very bottom
   }
   return { gl, canvas, caps, rendererNamed, ext, forced: !!force, floatTargets: !!floatTargets, maxAnisotropy: ext.aniso ? Math.min(8, gl.getParameter(ext.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1, shared: new Map(), programs: [], waiting: [], compiling: [], quietSeconds: 0, lastProgram: '' };
 }
@@ -65,7 +65,7 @@ export function createContext(canvas, { force = false } = {}) {
 /** Rough preset guess from the renderer string; the UI refines it with measured frame times. */
 export function guessTier(renderer, maxTextureSize) {
   const r = renderer.toLowerCase();
-  if (/swiftshader|llvmpipe|software|basic render/.test(r)) return 'low';
+  if (/swiftshader|llvmpipe|software|basic render/.test(r)) return 'ultraLow';
   if (/rtx|radeon rx (6[7-9]|7[6-9]|9)\d\d|rx (6[7-9]|7[6-9])\d\d|arc a7|m[1-4] (max|ultra)/.test(r)) return 'ultra';
   if (/gtx (9[7-8]|1[06][5-9])\d|gtx 1080|rx (5[5-9]|6[0-6])\d\d|radeon pro|arc a[35]|apple m[1-4]|m[1-4] pro/.test(r)) return 'high';
   if (/intel|uhd|iris|hd graphics|adreno|mali|powervr|apple gpu|radeon\(tm\) graphics|vega/.test(r)) return maxTextureSize >= 16384 && /iris xe|radeon\(tm\) graphics|vega|apple gpu/.test(r) ? 'medium' : 'low';

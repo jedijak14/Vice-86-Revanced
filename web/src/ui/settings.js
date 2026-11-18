@@ -12,9 +12,9 @@ export const SETTINGS_VERSION = 1;
 export const STORAGE_KEY = 'vice86.settings';
 
 /** Concrete presets, weakest first. The order is the scale Auto moves along. */
-export const PRESET_NAMES = Object.freeze(['low', 'medium', 'high', 'ultra']);
+export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra']);
 /** Every value the preset selector can show. */
-export const PRESET_CHOICES = Object.freeze(['auto', 'low', 'medium', 'high', 'ultra', 'custom']);
+export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'custom']);
 
 /** Named times of day (ARCHITECTURE section 8). `hours` is passed to actions.setTime as a convenience. */
 export const TIME_OPTIONS = Object.freeze([
@@ -68,7 +68,7 @@ const LOW_TO_ULTRA = ['Low', 'Medium', 'High', 'Ultra'];
 
 const GRAPHICS_FIELDS = [
   choice('preset', 'Preset', [
-    { value: 'auto', label: 'Auto' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
+    { value: 'auto', label: 'Auto' }, { value: 'ultraLow', label: 'Ultra Low' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'custom', label: 'Custom' },
   ], 'auto', 'Auto reads your graphics hardware, picks a starting preset and corrects it once from measured frame times. Changing any option below switches to Custom.'),
 
@@ -160,6 +160,11 @@ export const fieldOf = (section, key) => (FIELD_INDEX[section] ? FIELD_INDEX[sec
  * Concrete value of every performance-related graphics field for each preset (everything except
  * the selector itself and the two picture preferences, which a preset never touches).
  *
+ * Ultra Low is for a machine that is struggling to hold 30: half resolution, no shadows, no
+ * screen-space passes at all, no traffic, and a 30 Hz frame cap so the work the game does is the work
+ * you see rather than frames thrown away. It is a rung *below* Low, not another name for it, and Auto
+ * puts software renderers, 2 GB devices and two-core devices here.
+ *
  * Low is for integrated graphics and phones: reduced resolution, no screen-space passes beyond
  * FXAA and bloom. Medium adds the full lighting model at modest settings. High is the reference
  * look at 1080p on a mid-range desktop card. Ultra spends whatever is left on range and density.
@@ -167,6 +172,12 @@ export const fieldOf = (section, key) => (FIELD_INDEX[section] ? FIELD_INDEX[sec
  * turns something down.
  */
 export const PRESETS = Object.freeze({
+  ultraLow: Object.freeze({
+    resolutionScale: 0.5, dynamicResolution: true, maxPixelRatio: 1, frameCap: 30,
+    shadows: 0, ao: 0, reflections: 0, lights: 0, volumetrics: 0,
+    drawDistance: 0, density: 0, traffic: 0, particles: 0,
+    antialiasing: 'off', bloom: 0, motionBlur: 0, filmGrain: false, chromaticAberration: false,
+  }),
   low: Object.freeze({
     resolutionScale: 0.7, dynamicResolution: true, maxPixelRatio: 1, frameCap: 0,
     shadows: 1, ao: 0, reflections: 0, lights: 0, volumetrics: 0,

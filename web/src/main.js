@@ -210,7 +210,8 @@ export async function boot(env) {
     });
     const atlasReady = loaders.atlas().then(async (atlasModule) => {
       await breathe();
-      const atlas = atlasModule.buildAtlas({ size: settings.graphics.preset === 'low' ? LOW_ATLAS_SIZE : ATLAS_SIZE });
+      // The two weakest tiers pay for a full-size texture atlas they cannot show the detail in.
+      const atlas = atlasModule.buildAtlas({ size: settings.graphics.preset === 'low' || settings.graphics.preset === 'ultraLow' ? LOW_ATLAS_SIZE : ATLAS_SIZE });
       renderer.setAtlas(atlas);
       done.atlas = 1;
       assetProgress('Painting the surfaces');

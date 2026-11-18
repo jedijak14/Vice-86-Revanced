@@ -34,7 +34,7 @@ import { LampBuffer } from './lamps.js';
 import { createPlayer } from './player.js';
 import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
-import { createCrowd, ARTICULATE_CAP } from './crowd.js';
+import { createCrowd, PEOPLE_BY_TIER } from './crowd.js';
 import { WantedLedger } from './wanted.js';
 import { createRaces, TIERS as RACE_TIERS } from './races.js';
 import { createEffects } from './effects.js';
@@ -149,12 +149,40 @@ export function createGame(deps) {
   let redLaneId = -1, redAt = -1;
   const approach = [0, 0, 0];
   const crowd = createCrowd({
-    graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y,
+    graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y, quality: settings.graphics.preset,
     // A person driven at off the kerb is an offence, and the only witness is the crowd itself.
     onEndanger: (k) => {
       if (wanted.add('peds scattered', k > 0.8 ? 1 : 0.5)) toast('A pedestrian was struck out of the way');
     },
   });
+  // The people themselves are a download: five rigged bodies and one shared clip library, vendored into
+  // web/assets/models by tools/vendor_models.py. Asked for here, after the renderer and the world are up,
+  // so the loading screen does not wait on three megabytes of models nobody has looked at yet -- and the
+  // street says so out loud when they do not arrive, rather than quietly emptying the pavements.
+  const castRequest = (async () => {
+    const castModule = await import('../world/people/cast.js');
+    const decode = typeof self !== 'undefined' && typeof self.createImageBitmap === 'function'
+      ? async (bytes) => {
+        const bitmap = await self.createImageBitmap(new self.Blob([bytes], { type: 'image/png' }));
+        const surface = document.createElement('canvas');
+        surface.width = bitmap.width; surface.height = bitmap.height;
+        const ctx2d = surface.getContext('2d', { willReadFrequently: true });
+        ctx2d.drawImage(bitmap, 0, 0);
+        const pixels = ctx2d.getImageData(0, 0, bitmap.width, bitmap.height);
+        if (bitmap.close) bitmap.close();
+        return { width: pixels.width, height: pixels.height, data: pixels.data };
+      }
+      : null;
+    return castModule.loadCast({
+      fetchFile: (rel) => fetch(rel).then((r) => { if (!r.ok) throw new Error(`${rel}: ${r.status}`); return r.arrayBuffer(); }),
+      decodeImage: decode || null,
+    });
+  })().then((cast) => { if (cast) crowd.setCast(cast); return cast; })
+    .catch((error) => {
+      console.error('The street could not load its people: the pavements will be empty.', error);
+      crowd.castError = String((error && error.message) || error);
+      return null;
+    });
   // Street races (game/races.js): a route laid on the same lane graph the traffic drives, timed by
   // gates across the road. `raceKey` is what the nearest one asks for, and it is what the HUD and the
   // touch overlay both read, so a phone and a keyboard see the same opportunity.
@@ -479,7 +507,12 @@ export function createGame(deps) {
     traffic.setDensity(trafficDensity);
     // People come with the street the player asked for, and limbs come with the graphics preset:
     // a person with arms is seven draw calls, and a slow machine needs them elsewhere.
-    crowd.setDensity(trafficDensity, ARTICULATE_CAP[settings.graphics.preset] ?? 4);
+    // People come with the street the player asked for, and how many of them may be animated comes with
+    // the graphics preset: a body is a rig solved and a vertex buffer rewritten every frame, and a slow
+    // machine needs that work elsewhere. Ultra Low still gets two, because a street with nobody on it is
+    // a car park rather than a neighbourhood.
+    crowd.setDensity(trafficDensity, PEOPLE_BY_TIER[settings.graphics.preset] ?? 5);
+    crowd.setQuality(settings.graphics.preset);
     input.sensitivity = settings.controls.steerSensitivity || 1;
     if (phase.name === 'driving' || phase.name === 'paused') clock.timeFlow = settings.game.timeFlow;
     clock.reduceFlashing = Boolean(settings.game.reduceFlashing);
@@ -764,6 +797,10 @@ export function createGame(deps) {
     get police() { return police ? police.snapshot() : null; },
     /** The street's own population, and what the agency has written down against you. */
     get crowd() { return crowd.snapshot(); },
+    /** Bodies and triangles the crowd put in front of the camera on the last drawn frame. */
+    get crowdRender() { return crowd.renderStats(); },
+    /** The vendored people: whether they arrived, and what they weigh. `pending` means still fetching. */
+    get people() { return { state: crowd.castReady ? 'ready' : (crowd.castError ? 'failed' : 'pending'), error: crowd.castError || null }; },
     get wanted() { return wanted.snapshot(); },
     /** The crowd, for a script that wants somebody on a particular corner (see game/missions.js). */
     hailAt(x, z) { return crowd.makeHailer(x, z) ? crowd.snapshot() : null; },
