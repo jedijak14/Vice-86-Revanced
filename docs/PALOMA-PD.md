@@ -30,8 +30,15 @@ hands forward, no legs, because the shell and the windscreen hide them.
 `game/traffic.js` uploads one officer mesh, and gives each unit on an incident a dynamic object
 through `renderer.addDynamic()`. Its pose is written with `core/math.js`'s `m4fromYawPos` at the
 flat land height, with a half-centimetre bob while it walks. An officer has no collider and no
-kinematic body: it is scenery that moves. It can be driven through, and the code makes them back off
-rather than pretend otherwise (they return to their car as soon as you move).
+kinematic body: it is scenery that moves.
+
+They ride, and they only get out where an officer would. An officer exists while their own car is
+standing (under 2.2 m/s), within 150 m, and has not been shoved out of place; at a traffic stop —
+the player waiting with a unit after them — one walks across to the driver's door out to 60 m, and
+walks back to its own car when the call is over. Nothing chases a cruising car on foot: a unit that
+pulls away, a unit that has been hit, or a unit that is simply too far off releases its officer at
+once, so the object goes back to the renderer rather than standing in the middle of the beat. It can
+be driven through, which the geometry makes obvious: it is short, thin, and does not stop anything.
 
 ## The dispatch (`game/police.js`)
 
@@ -60,7 +67,9 @@ the release's own one-in-three) run them anyway.
 **When it is over.** A unit within 22 m of you while you are under 1.1 m/s for 3 s ends it as a
 *traffic stop* — officers walk to your driver's door, then back to their cars. Out of sight for 1.5 s
 the mode becomes `search`, they keep coming to the last place you were seen; out of sight for 12 s
-the search is called off. There is no health bar, no arrest, no wanted stars and no respawn penalty:
+the search is called off. Every one of those clocks is measured in simulated time (`game/loop.js`
+hands the streets a fixed 120 Hz step and stops keeping up below twelve frames per second), so a
+slow machine slows the police down with everything else instead of making them give up early. There is no health bar, no arrest, no wanted stars and no respawn penalty:
 this is a 1986 street, and the sanction is a stop.
 
 The HUD carries one line of it, under the clock: `Paloma PD · units 2 · pursuit`, with three pips for
@@ -81,12 +90,14 @@ heat. Dispatch speaks through the game's own `ui.toast`. The wail is `audio/sire
 
 The beat is deliberately a small addition to the traffic the player asked for, not part of it:
 `MOVING_BY_DENSITY` stays what it was, and one cruiser at traffic 1 and two above it are added on top
-and kept until they are more than 260 m away. At traffic 0 there is no police force, because there
-is no traffic.
+and kept until they are more than 260 m away. A cruiser may be placed nearer than ordinary traffic
+(95 m rather than the spawn distance the traffic uses) but never in view, so the streets are never
+empty of police without one appearing on the hood of your car. At traffic 0 there is no police force,
+because there is no traffic.
 
 ## Testing
 
-`test/game/police.test.mjs` (13 cases, `node --test test/`) covers the judgements — that a route only
+`test/game/police.test.mjs` (13 cases, `node --test`) covers the judgements — that a route only
 names legal successors and reaches across a junction connector, that an unseen excess of speed is not
 an offence, that a struck patrol car is, that a directed driver drives the route and stops on the
 goal lane **over a real `prepareLaneGraph()` network and the real driver model**, that the order is
@@ -95,4 +106,9 @@ policing happens on the title, in the garage or while paused — and that the of
 1.8 m person with feet on the ground and one shader family, not a blob.
 
 `tools/browser-check.mjs` boots the real page headlessly on SwiftShader and reports errors, missing
-requests and what the dispatch and the HUD say.
+requests and what the dispatch and the HUD say. The two divide the work deliberately. A software
+renderer runs the streets at a fifth of real time, so the browser check is there to prove the wiring —
+that the units exist, that an ordered incident finds witnesses, that `2/2` are answering and the HUD
+line and its pips light up with them — and it never waits for a car to drive anywhere. That the cars
+actually drive, reach the sighting and hand the order back when the stop is over is the Node case's
+job, which runs the same driver model in milliseconds.

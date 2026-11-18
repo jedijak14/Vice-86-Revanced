@@ -67,7 +67,7 @@ on the road, `?quality=low|medium|high|ultra` overrides the picture, `?seed=`, `
 
 ```sh
 python3 tools/import_release.py --verify   # offline: the release bytes, the closure, and what is ours
-node --test test/                          # the dispatch's judgements and the officer's geometry
+node --test                                # the dispatch's judgements and the officer's geometry
 LD_LIBRARY_PATH=/tmp/chromium-libs node tools/browser-check.mjs --minutes=5 --heat=2
 ```
 

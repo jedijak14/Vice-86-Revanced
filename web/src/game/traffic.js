@@ -688,15 +688,18 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
 
     /**
      * After the physics step: poses of the drawn vehicles, lamp states, the audible list.
-     * @param {number} dt           frame time, seconds
+     * @param {number} dt            frame time, seconds
      * @param {number} sunElevation  radians above the horizon
      * @param {number} rain          0..1
+     * @param {number} [stepTime]    the simulated time `step` just advanced, seconds
      */
-    update(dt, sunElevation, rain) {
+    update(dt, sunElevation, rain, stepTime = dt) {
       if (police) {
-        // What the units are told happens before their lamps are written for this frame.
-        police.step(dt, focus, true);
-        updatePolice(dt, police.status.heat > 0 && Math.hypot(focus.vx, focus.vz) < 2.2);
+        // What the units are told happens before their lamps are written for this frame. Timed on
+        // the simulation, not on the wall clock: a search called off after twelve seconds is
+        // twelve seconds of the cars' own time, and a slow frame does not make the police impatient.
+        police.step(stepTime, focus, true);
+        updatePolice(stepTime, police.status.heat > 0 && Math.hypot(focus.vx, focus.vz) < 2.2);
       }
       const eye = focus.eye;
       audible.length = 0;

@@ -114,11 +114,12 @@ while (Date.now() < deadline && reached) {
     log(`ordering an incident at level ${heat}`);
     await page.evaluate((level) => window.__vice.dispatch(level, 'Check · Patrol car ordered to pull you over'), heat);
   }
-  // Hold the throttle for a while: the point is to be seen doing something, and to be moving
-  // while the units come. Then let go, so that the stop can complete.
-  // Floor it for the first three quarters of a minute, then coast and brake: an incident that is
-  // ordered at rest is one the officers can walk up to.
-  await page.evaluate((on) => window.__vice.input(on ? { throttle: 1 } : { brake: 0.7 }), Date.now() - t0 < 45_000);
+  // Throttle, then the brake, then nothing at all: the point is to be seen doing something while
+  // an officer can see it, and then to sit still with a unit behind you, which is the shape of a
+  // traffic stop. Holding the brake any longer would drive the car backwards out of its own stop.
+  const since = Date.now() - t0;
+  const pedal = since < 45_000 ? { throttle: 1 } : since < 75_000 ? { brake: 0.7 } : null;
+  await page.evaluate((axis) => window.__vice.input(axis), pedal);
   await page.waitForTimeout(1_500);
 }
 await page.evaluate(() => window.__vice.input(null));

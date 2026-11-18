@@ -898,11 +898,15 @@ export function createGame(deps) {
 
       // Simulation.
       const steps = simDt > 0 ? stepper.advance(simDt) : 0;
+      // How much time the streets really got this frame. Below 12 frames per second the game slows
+      // down rather than spiral (loop.js), so this is less than `simDt`: anything that measures a
+      // rate against what the cars are doing — the dispatch, an officer's walk — belongs to it.
+      const stepTime = steps * FIXED_DT;
       if (simDt > 0) {
         const p0 = now();
         if (steps > 0 && !inGarage) {
           traffic.setFocus(player, camera);
-          traffic.step(steps * FIXED_DT);
+          traffic.step(stepTime);
         }
         physics.advance(steps, stepper.alpha);
         physicsMs += (now() - p0 - physicsMs) * 0.1;
@@ -951,7 +955,7 @@ export function createGame(deps) {
         // scene, the room, or a frame that is not moving.
         if (police) police.enabled = phase.name === 'driving';
         traffic.setFocus(player, camera);
-        traffic.update(simDt, env.sunElevation, weather.rain);
+        traffic.update(simDt, env.sunElevation, weather.rain, stepTime);
         traffic.writeLamps(lamps, camera.position, frame.time);
         if (graph) writeSignalLamps(lamps, graph.junctions, traffic.sim.time, camera.position);
         nitrous.update(simDt, controls.throttle, player, lamps);
