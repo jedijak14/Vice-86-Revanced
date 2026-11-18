@@ -12,9 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Import and verify the pinned browser module graph
-        run: python3 tools/import_release.py
+        run: |
+          python3 tools/import_release.py --out "$RUNNER_TEMP/vice-release"
+          mkdir -p upstream
+          cp -R "$RUNNER_TEMP/vice-release/." upstream/
       - name: Save original bytes on this branch
         if: github.ref == 'refs/heads/arena/2cd47a60-vice-86-revanced'
         run: |

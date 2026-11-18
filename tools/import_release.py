@@ -49,6 +49,10 @@ def dependencies(path, body):
     # Some wasm-bindgen builds use a bare filename in new URL(..., import.meta.url).
     url_files = re.findall(r'''new\s+URL\(\s*['"]([\w.-]+\.wasm)['"]\s*,\s*import\.meta\.url''', source)
     references = [m[2] for m in REFERENCE.finditer(source)]
+    if path == PREFIX + 'src/render/index.js':
+        # createRenderer imports ./families/${name}.js for each FAMILY_NAMES entry.
+        references.extend(f'./families/{name}.js' for name in
+                          ('solid', 'ground', 'facade', 'vehicle', 'foliage', 'glass'))
     if path == PREFIX + 'vendor/rapier/rapier.mjs':
         # This is the bundled compat build. Its WebAssembly binding table
         # contains './rapier_wasm3d_bg.js' as a *key*, not a module import.
