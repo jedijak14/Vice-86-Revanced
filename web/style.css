@@ -1,0 +1,1209 @@
+/* VICE '86: interface styles.
+ *
+ * Follows design/brief/hud-and-menu.md. One unit u = max(4.2px, min(1vh, 0.5625vw)) sizes every
+ * part of the HUD and the menus, so the layout keeps its proportion from a phone held upright to
+ * a 4K monitor; menu margins are in vw. White ink, one accent (pink) per element, cyan for "on",
+ * and no panel behind any HUD text: legibility comes from a two-layer shadow.
+ *
+ * Type: no font files. Display text is the condensed bold face each platform ships with, set
+ * upright and leaned 11 degrees with a skew (several of those faces have no italic). Where no
+ * condensed face is installed, src/ui/type.js measures the face that resolved and sets --squeeze
+ * below 1: display type is then set at font-size * squeeze and stretched back to its full height,
+ * which narrows it without changing any line height. Every display element therefore states its
+ * nominal size as --size (and, when it has a box, the box height as --box) and takes font-size,
+ * line-height and transform from the shared rule. Text is the system UI face. Nothing under 11 px.
+ *
+ * Per-frame rules (HUD): no layout reads, no filters. Digits sit in fixed-width cells; the rev
+ * and nitrous arcs are stroke-dashoffsets; the north mark and the minimap canvas turn through one
+ * custom property each.
+ */
+
+:root {
+  --ink: #ffffff;
+  --ink-dim: rgb(255 255 255 / 0.62);
+  --ink-hud: rgb(255 255 255 / 0.86);   /* secondary HUD labels: they sit over sky and sand */
+  --ink-70: rgb(255 255 255 / 0.7);
+  --ink-55: rgb(255 255 255 / 0.55);
+  --ink-35: rgb(255 255 255 / 0.35);
+  --ink-25: rgb(255 255 255 / 0.25);
+  --ink-18: rgb(255 255 255 / 0.18);
+  --ink-08: rgb(255 255 255 / 0.08);
+  --pink: #ff2e88;
+  --pink-glow: rgb(255 46 136 / 0.5);
+  --cyan: #19e6f0;
+  --warn: #ff3b30;
+  --night: #0a0618;
+  --night-60: rgb(10 6 24 / 0.6);
+  --purple: #410082;
+  --map-land: rgb(35 43 61 / 0.78);
+  --display: "DIN Condensed", "Bahnschrift", "Roboto Condensed", "Avenir Next Condensed", "HelveticaNeue-CondensedBold", "Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow", "DejaVu Sans Condensed", Impact, sans-serif-condensed, sans-serif;
+  --text: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, system-ui, sans-serif;
+  --lean: skewX(-11deg);   /* bars and boxes */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--night);
+  color: var(--ink);
+  font-family: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.notice {
+  position: fixed;
+  inset: auto 0 0;
+  margin: 0;
+  padding: 1rem;
+  text-align: center;
+  background: var(--night);
+  color: var(--ink-70);
+}
+
+/* ------------------------------------------------------------------ overlay root and layers */
+
+.ui {
+  --u: max(4.2px, min(1vh, 0.5625vw));
+  /* Set by src/ui/type.js (and the inline copy in index.html) from the face that resolved. */
+  --squeeze: 1;
+  --cell: 0.5;
+  --stretch: scaleY(calc(1 / var(--squeeze)));
+  --lean-type: skewX(-11deg) var(--stretch);   /* display type: lean, and full height after the squeeze */
+  /* The legibility shadow of brief 6.4: a tight dark edge (twice, for density) and a soft halo. */
+  --shadow: 0 0 calc(0.14 * var(--u)) rgb(10 6 24 / 0.85), 0 0 calc(0.14 * var(--u)) rgb(10 6 24 / 0.85), 0 calc(0.1 * var(--u)) calc(0.9 * var(--u)) rgb(10 6 24 / 0.55);
+  /* Small HUD labels have little ink of their own; their halo is drawn closer and denser. */
+  --shadow-small: calc(0.09 * var(--u)) 0 0 rgb(10 6 24 / 0.7), calc(-0.09 * var(--u)) 0 0 rgb(10 6 24 / 0.7), 0 calc(0.09 * var(--u)) 0 rgb(10 6 24 / 0.7), 0 calc(-0.09 * var(--u)) 0 rgb(10 6 24 / 0.7), 0 0 calc(0.12 * var(--u)) rgb(10 6 24 / 0.9), 0 0 calc(0.5 * var(--u)) rgb(10 6 24 / 0.7), 0 calc(0.1 * var(--u)) calc(0.9 * var(--u)) rgb(10 6 24 / 0.5);
+  position: fixed;
+  inset: 0;
+  pointer-events: none;   /* the game canvas receives input unless a layer below opts in */
+  -webkit-user-select: none;
+  user-select: none;
+  line-height: 1.25;
+}
+
+.ui.is-hidden > :not(.error) { display: none !important; }
+
+.touch, .menu, .garage, .loading, .error { position: absolute; inset: 0; display: none; }
+.touch.is-on, .loading.is-on, .error.is-on { display: block; }
+
+/* Display type: condensed bold capitals, leaned by transform rather than italic. Each element
+   sets --size; see the note on --squeeze at the top of the file. */
+.wordmark__title, .gauge__speed, .gauge__gear, .gauge__unit, .hud__clock, .hud__banner, .hud__place,
+.menu__heading, .panel__title, .panel__tab, .row__label, .row__value, .pick__pill, .device__name,
+.garage__place, .garage__name, .garage__label, .garage__caption, .garage__drive, .stat__label, .stat__figure,
+.keys__title, .key, .loading__percent, .error__kicker, .error__title, .error__reload, .toast {
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 75%;
+  --pad: calc(var(--size) * (1 - var(--squeeze)) / 2);
+  font-size: calc(var(--size) * var(--squeeze));
+  line-height: calc(var(--size) * var(--squeeze));
+  margin-block: var(--pad);   /* the line box is laid out shorter by the squeeze and stretched back over these margins */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transform: var(--lean-type);
+}
+/* Small spaced labels stand upright. */
+.gauge__unit, .hud__place, .menu__heading, .keys__title, .error__kicker, .garage__place, .garage__label, .stat__label { transform: var(--stretch); }
+/* Display type inside a box: the same for the box. */
+.panel__tab, .pick__pill, .key, .toast, .error__reload, .garage__drive {
+  --pad: calc(var(--box) * (1 - var(--squeeze)) / 2);
+  height: calc(var(--box) * var(--squeeze));
+}
+/* The measuring probe of src/ui/type.js. */
+.ui__probe {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 75%;
+  font-size: 100px;
+  line-height: 1;
+}
+
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: middle;
+}
+
+/* Key names in thin outlined boxes. */
+.key {
+  --size: max(11px, calc(1.5 * var(--u)));
+  --box: calc(2.4 * var(--u));
+  display: inline-grid;
+  place-items: center;
+  min-width: calc(2.4 * var(--u));
+  padding: 0 calc(0.7 * var(--u));
+  border: solid var(--ink-55);
+  border-width: calc(0.12 * var(--u) * var(--squeeze)) calc(0.12 * var(--u));
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ wordmark */
+
+.wordmark { display: grid; justify-items: start; }
+.wordmark__title {
+  --size: calc(12.5 * var(--u));   /* capital height about 9u */
+  --pad: calc(0.9 * var(--size) * (1 - var(--squeeze)) / 2);
+  line-height: calc(0.9 * var(--size) * var(--squeeze));
+  letter-spacing: 0.02em;
+  transform-origin: left center;
+  text-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.wordmark__year { color: var(--pink); margin-left: 0.14em; text-shadow: var(--shadow), 0 0 calc(2.4 * var(--u)) rgb(255 46 136 / 0.55); }
+.wordmark__line {
+  width: calc(14 * var(--u));
+  height: calc(0.5 * var(--u));
+  margin-top: calc(1.2 * var(--u));
+  background: var(--pink);
+  transform: var(--lean);
+  box-shadow: 0 0 calc(2 * var(--u)) var(--pink-glow);
+}
+/* Two fainter bands under the line: the nod to a sunset's stripes, in the one accent only. */
+.wordmark__stripes { display: grid; gap: calc(0.3 * var(--u)); margin-top: calc(0.45 * var(--u)); }
+.wordmark__stripes i { display: block; height: calc(0.22 * var(--u)); background: var(--pink); transform: var(--lean); }
+.wordmark__stripes i:first-child { width: calc(10 * var(--u)); opacity: 0.55; }
+.wordmark__stripes i:last-child { width: calc(6 * var(--u)); opacity: 0.3; }
+.wordmark__tag {
+  margin-top: calc(2.2 * var(--u));
+  font-family: var(--text);
+  font-size: max(11px, calc(1.6 * var(--u)));
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--shadow);
+}
+
+/* ------------------------------------------------------------------ HUD */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  /* Beyond 2.4:1 the instruments stop following the corners and stay within a centred region. */
+  left: max(0px, calc(50% - 120 * var(--u)));
+  right: max(0px, calc(50% - 120 * var(--u)));
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms ease-out, visibility 0s 150ms;
+  text-shadow: var(--shadow);
+}
+.hud.is-on { opacity: 1; visibility: visible; transition: opacity 300ms ease-out, visibility 0s; }
+
+/* ---- clock and district banner, top left */
+
+.hud__top {
+  position: absolute;
+  top: calc(5 * var(--u) + var(--safe-top));
+  left: calc(5 * var(--u) + var(--safe-left));
+}
+/* Paloma PD: what the dispatch is doing about the player (src/game/police.js). One line under
+   the clock, in the same small capitals as the district name, with the heat as three pips. */
+.hud__police {
+  display: flex;
+  gap: calc(0.7 * var(--u));
+  align-items: center;
+  margin-top: calc(0.6 * var(--u));
+  font-size: max(10px, calc(1.05 * var(--u)));
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-70);
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.hud__police.is-on { opacity: 1; }
+.hud__police-label { color: var(--ink-35); }
+.hud__police-text { color: var(--pink); }
+.hud__police-pips { display: flex; gap: calc(0.3 * var(--u)); }
+/* Wanted stars: the department's gold when lit, a hairline of ink when not. Drawn as icons rather
+   than glyphs so that they take the same stroke as every other symbol in the interface. */
+.hud__star { display: flex; color: var(--ink-18); transition: color 180ms ease-out, transform 180ms ease-out; }
+.hud__star .icon { width: max(9px, calc(0.95 * var(--u))); height: max(9px, calc(0.95 * var(--u))); }
+.hud__star.is-on { color: #e8c25a; }
+.hud__star.is-on .icon { fill: rgba(232, 194, 90, 0.32); }
+.hud__police.is-hot .hud__star.is-on { animation: hud-star 1.6s ease-in-out infinite; }
+@keyframes hud-star { 50% { transform: scale(1.12); } }
+.ui.is-touch .hud__police { justify-content: center; }
+
+/* One line each for the job, the race and the room, under the police line. */
+.hud__rows { display: flex; flex-direction: column; gap: calc(0.25 * var(--u)); margin-top: calc(0.45 * var(--u)); }
+.hud__row {
+  display: flex;
+  align-items: center;
+  gap: calc(0.45 * var(--u));
+  font-size: max(9px, calc(0.95 * var(--u)));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.hud__row.is-on { opacity: 1; }
+.hud__row .icon { width: max(10px, calc(1.1 * var(--u))); height: max(10px, calc(1.1 * var(--u))); color: var(--ink-35); }
+.hud__row-label { color: var(--ink-35); }
+.hud__row-text { color: var(--cyan); }
+.hud__row--race .icon, .hud__row--race .hud__row-text { color: var(--pink); }
+.ui.is-touch .hud__rows { align-items: center; }
+
+.hud__clock {
+  --size: calc(3 * var(--u));
+  display: flex;
+  letter-spacing: 0;
+  transform-origin: left center;
+}
+.hud__clock-digit { width: calc(var(--cell) * var(--size)); text-align: center; }
+.hud__colon { width: calc(0.26 * var(--size)); text-align: center; }
+.hud__clock.is-flowing .hud__colon { animation: hud-colon 1s step-end infinite; }
+@keyframes hud-colon { 50% { opacity: 0.3; } }   /* dims rather than vanishes: the time must read at any instant */
+
+.hud__banner {
+  --size: calc(5.2 * var(--u));
+  position: absolute;
+  top: calc(5 * var(--u));   /* 10u from the top of the screen */
+  left: 0;
+  padding-left: calc(1.8 * var(--u));
+  white-space: nowrap;
+  transform: translateX(calc(-3 * var(--u))) var(--lean-type);
+  transform-origin: left center;
+  opacity: 0;
+  transition: opacity 400ms ease-out, transform 0s 400ms;
+}
+/* The bar leans and stretches with the banner it belongs to. */
+.hud__banner::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: calc(0.6 * var(--u));
+  height: calc(4.6 * var(--u) * var(--squeeze));
+  margin-top: calc(-2.3 * var(--u) * var(--squeeze));
+  background: var(--pink);
+}
+.hud__banner.is-on { opacity: 1; transform: var(--lean-type); transition: opacity 180ms ease-out, transform 180ms ease-out; }
+
+/* ---- minimap disc, bottom left */
+
+.hud__map {
+  position: absolute;
+  left: calc(5 * var(--u) + var(--safe-left));
+  bottom: calc(7.5 * var(--u) + var(--safe-bottom));
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+}
+.hud__map-view {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--map-land);
+  /* The outer 8 percent of the radius fades to 60 percent, so streets do not end hard at the rim. */
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 92%, rgb(0 0 0 / 0.6) 100%);
+  mask-image: radial-gradient(circle closest-side, #000 92%, rgb(0 0 0 / 0.6) 100%);
+  contain: strict;
+}
+/* Size and offset come from hud.js (MAP_OVERSCAN, MAP_PLAYER_Y); the canvas turns about its own
+   centre, which is the car. */
+.hud__map-canvas {
+  position: absolute;
+  left: 50%;
+  display: block;
+  transform: rotate(var(--turn, 0deg));
+  will-change: transform;
+}
+.hud__rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: calc(0.22 * var(--u)) solid rgb(255 255 255 / 0.85);
+  box-shadow: 0 0 0 calc(0.12 * var(--u)) rgb(255 46 136 / 0.6), 0 0 calc(0.6 * var(--u)) rgb(10 6 24 / 0.5);
+  pointer-events: none;
+}
+.hud__car {
+  position: absolute;
+  left: 50%;
+  width: calc(3.4 * var(--u));
+  height: calc(3.4 * var(--u));
+  margin: calc(-1.7 * var(--u)) 0 0 calc(-1.7 * var(--u));
+  overflow: visible;
+}
+.hud__car-halo { fill: var(--cyan); fill-opacity: 0.22; }
+.hud__car-arrow { fill: var(--ink); stroke: var(--night); stroke-width: 1.5; stroke-linejoin: round; }
+.hud__north {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--north, 0deg));
+  will-change: transform;
+  pointer-events: none;
+}
+.hud__north-mark {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: calc(2 * var(--u));
+  height: calc(2 * var(--u));
+  margin: calc(-1 * var(--u)) 0 0 calc(-1 * var(--u));
+  border-radius: 50%;
+  background: var(--night);
+  color: var(--pink);
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 75%;
+  font-size: max(11px, calc(1.4 * var(--u)));
+  line-height: calc(2 * var(--u));
+  text-align: center;
+  text-shadow: none;
+  transform: rotate(calc(-1 * var(--north, 0deg)));
+}
+.hud__place {
+  position: absolute;
+  left: calc(5 * var(--u) + var(--safe-left));
+  bottom: calc(5 * var(--u) + var(--safe-bottom));
+  --size: max(11px, calc(1.4 * var(--u)));
+  width: calc(22 * var(--u));
+  letter-spacing: 0.22em;
+  text-align: center;
+  color: var(--ink-hud);
+  white-space: nowrap;
+}
+
+/* ---- rev dial, bottom right: a 26u box centred on the dial's centre (16u in, 18.5u up) */
+
+.gauge {
+  position: absolute;
+  right: calc(3 * var(--u) + var(--safe-right));
+  bottom: calc(5.5 * var(--u) + var(--safe-bottom));
+  width: calc(26 * var(--u));
+  height: calc(26 * var(--u));
+}
+.gauge__dial { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; }
+/* The view box is 260 units for 26u: 10 units to the unit. */
+.gauge__shade { stroke: #000; stroke-opacity: 0.35; stroke-width: 8; }
+.gauge__shade--nitrous { stroke-width: 6; }
+.gauge__track { stroke: var(--ink); stroke-opacity: 0.18; stroke-width: 5; }
+.gauge__zone { stroke: var(--pink); stroke-opacity: 0.9; stroke-width: 7; }
+.gauge__ticks { stroke: var(--ink); stroke-opacity: 0.5; stroke-width: 3; }
+.gauge__value {
+  stroke: var(--ink);
+  stroke-width: 5;
+  stroke-linecap: butt;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  will-change: stroke-dashoffset;
+}
+.gauge.is-hot .gauge__value { stroke: var(--pink); }
+.gauge__nitrous-track { stroke: var(--ink); stroke-opacity: 0.18; stroke-width: 3; }
+.gauge__nitrous {
+  stroke: var(--cyan);
+  stroke-width: 3;
+  stroke-linecap: butt;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  will-change: stroke-dashoffset;
+}
+.gauge.is-nitrous-empty .gauge__nitrous-track { stroke-opacity: 0.1; }
+.gauge.is-boosting .gauge__nitrous { animation: nitrous-pulse 600ms ease-in-out infinite alternate; }
+@keyframes nitrous-pulse { from { stroke-opacity: 1; } to { stroke-opacity: 0.45; } }
+.gauge__nitrous-label {
+  position: absolute;
+  left: calc(1.4 * var(--u));
+  top: calc(22.2 * var(--u));
+  font-family: var(--text);
+  font-size: max(11px, calc(1.1 * var(--u)));
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+}
+.gauge__nitrous-label, .gauge__unit, .hud__place { text-shadow: var(--shadow-small); }
+.gauge.is-nitrous-empty .gauge__nitrous-label { color: var(--ink-35); }
+
+/* The limiter: arc and gear between pink and white at 12 Hz (83 ms a cycle); nothing else flashes. */
+.gauge.is-limit .gauge__value, .gauge.is-limit .gauge__gear { animation: limiter 83.33ms step-end infinite; }
+@keyframes limiter { 0% { stroke: var(--pink); color: var(--pink); } 50% { stroke: var(--ink); color: var(--ink); } }
+.hud.is-steady .gauge.is-limit .gauge__value { animation: none; stroke: var(--pink); }
+.hud.is-steady .gauge.is-limit .gauge__gear { animation: none; color: var(--pink); }
+.hud.is-steady .gauge.is-boosting .gauge__nitrous { animation: none; }
+
+.gauge__speed {
+  --size: calc(8.5 * var(--u));
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(6.6 * var(--u));   /* baseline about 0.5u below the dial's centre */
+  display: flex;
+  justify-content: center;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+/* One figure to a fixed cell, so a changing figure never moves its neighbours; cells without a
+   figure are dropped, which keeps a one- or two-figure speed on the dial's centre line. */
+.gauge__digit { width: calc(var(--cell) * var(--size)); text-align: center; }
+.gauge__digit:empty { display: none; }
+.gauge__unit {
+  --size: max(11px, calc(1.5 * var(--u)));
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(14.5 * var(--u));
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;   /* the tracking after the last letter would push the word off centre */
+  text-align: center;
+  color: var(--ink-hud);
+}
+.gauge__gear {
+  --size: calc(3.6 * var(--u));
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(18.4 * var(--u));
+  text-align: center;
+  transition: color 150ms step-end;
+}
+.gauge__gear.is-shift { color: var(--pink); transition: none; }
+.gauge__states {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(22.3 * var(--u));
+  display: flex;
+  justify-content: center;
+  gap: calc(1.6 * var(--u));
+  height: calc(2.2 * var(--u));
+}
+.gauge__state { display: none; width: calc(2.2 * var(--u)); height: calc(2.2 * var(--u)); stroke-width: 2.4; filter: drop-shadow(0 0 calc(0.3 * var(--u)) rgb(10 6 24 / 0.7)); }
+.gauge__state.is-on { display: block; }
+.gauge__state--warn { color: var(--warn); }
+
+/* Windows narrower than 100u (the 4.2 px floor is active): drop the small label and the ticks. */
+@media (max-width: 420px) {
+  .hud__place, .gauge__ticks { display: none; }
+}
+
+/* ------------------------------------------------------------------ toast */
+
+.toast {
+  position: absolute;
+  top: calc(9 * var(--u) + var(--safe-top));
+  --size: max(11px, calc(2 * var(--u)));
+  --box: calc(4 * var(--u));
+  left: 50%;
+  padding: 0 calc(2.4 * var(--u));
+  display: flex;
+  align-items: center;
+  background: var(--night-60);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-50%) var(--lean-type) translateY(calc(-0.5 * var(--u)));
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+.toast.is-on { opacity: 1; transform: translateX(-50%) var(--lean-type); }
+
+/* ------------------------------------------------------------------ touch controls */
+
+.touch {
+  font-size: clamp(10px, 1.6vmin, 24px);
+  touch-action: none;
+  color: var(--ink);
+}
+.touch > * { pointer-events: auto; }
+
+.touch__taps {
+  position: absolute;
+  top: calc(4 * var(--u) + var(--safe-top));
+  left: 50%;
+  display: flex;
+  gap: calc(14 * var(--u));   /* the clock sits between the two buttons */
+  transform: translateX(-50%);
+}
+.touch__tap {
+  appearance: none;
+  width: 3.6em;
+  height: 3.6em;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--ink-25);
+  background: rgb(10 6 24 / 0.4);
+  color: inherit;
+  font: inherit;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+.touch__tap .icon { width: 1.7em; height: 1.7em; }
+/* A street race that can be taken from here: the flag lights up, and it is inert until it does. */
+.touch__tap--race:disabled { opacity: 0.34; }
+.touch__tap--race.is-ready { border-color: var(--hot-70, rgba(255, 92, 140, 0.7)); color: #ff6b9d; }
+.touch__tap:active { background: var(--ink-18); }
+
+.touch__steer {
+  position: absolute;
+  left: calc(1.4em + var(--safe-left));
+  bottom: calc(1.4em + var(--safe-bottom));
+  width: min(42vw, 30em);
+  height: 7.5em;
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  padding: 0 1.4em;
+  border-radius: 4em;
+  border: 1px solid var(--ink-25);
+  background: rgb(10 6 24 / 0.35);
+  touch-action: none;
+}
+.touch__steer.is-held { border-color: var(--ink-55); }
+.touch__arrow { width: 1.6em; height: 1.6em; color: var(--ink-55); flex: none; }
+.touch__rail {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  background: var(--ink-25);
+  contain: layout;
+}
+.touch__knob {
+  position: absolute;
+  top: 50%;
+  left: calc(50% + var(--steer, 0) * 50%);
+  width: 3.4em;
+  height: 3.4em;
+  margin: -1.7em 0 0 -1.7em;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 0.4em var(--ink-08);
+}
+.touch__steer.is-held .touch__knob { background: var(--pink); }
+
+.touch__pedals {
+  position: absolute;
+  right: calc(1.4em + var(--safe-right));
+  bottom: calc(1.4em + var(--safe-bottom));
+  display: grid;
+  grid-template-columns: 6em 7.5em 9em;
+  grid-template-rows: 6em 9.5em;
+  gap: 0.9em;
+  touch-action: none;
+}
+.touch__button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  border-radius: 1.6em;
+  border: 1px solid var(--ink-25);
+  background: rgb(10 6 24 / 0.35);
+  color: var(--ink-70);
+  touch-action: none;
+}
+.touch__button .icon { width: 2.2em; height: 2.2em; }
+.touch__button.is-held { background: var(--ink-18); border-color: var(--ink-55); color: var(--ink); }
+.touch__button--boost { grid-area: 2 / 1; }
+.touch__button--handbrake { grid-area: 1 / 2; }
+.touch__button--brake { grid-area: 2 / 2; }
+.touch__button--throttle { grid-area: 1 / 3 / 3 / 4; }
+.touch__button--boost.is-held { color: var(--cyan); border-color: var(--cyan); }
+.touch__button--handbrake.is-held { color: var(--pink); border-color: var(--pink); }
+.touch__label { font-size: 0.75em; letter-spacing: 0.18em; text-transform: uppercase; }
+
+/* On a touch device the thumbs own the bottom corners, so the two discs move to the top corners
+   and the clock to the top centre, between the camera and pause buttons. */
+.ui.is-touch .hud__map, .ui.is-touch .gauge { bottom: auto; top: calc(4 * var(--u) + var(--safe-top)); }
+.ui.is-touch .gauge { top: calc(2.5 * var(--u) + var(--safe-top)); }
+.ui.is-touch .hud__place { bottom: auto; top: calc(27 * var(--u) + var(--safe-top)); }
+.ui.is-touch .hud__top { left: 50%; transform: translateX(-50%); text-align: center; }
+.ui.is-touch .hud__clock { justify-content: center; }
+.ui.is-touch .hud__banner { --size: calc(3.6 * var(--u)); left: 50%; transform: translateX(-50%) var(--lean-type); transform-origin: center; top: calc(5.5 * var(--u)); }
+.ui.is-touch .hud__banner.is-on { transform: translateX(-50%) var(--lean-type); }
+.ui.is-touch .toast { top: calc(16 * var(--u) + var(--safe-top)); }
+
+/* ------------------------------------------------------------------ menus */
+
+.menu {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+.menu.is-on { display: block; opacity: 1; }
+
+/* Scrims. Title: a horizontal fade that leaves the car clear in the right half, plus a bottom
+   fade. Pause: an even veil with the picture's colour lowered. Long pages: nearly opaque. */
+.menu::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to top, rgb(10 6 24 / 0.5), transparent 18vh),
+    linear-gradient(to right, rgb(21 5 45 / 0.8), rgb(21 5 45 / 0.45) 32vw, transparent 58vw);
+}
+.menu[data-root="pause"]::before {
+  background: rgb(10 6 24 / 0.62);
+  -webkit-backdrop-filter: saturate(0.7);
+  backdrop-filter: saturate(0.7);
+}
+.menu[data-page="settings"]::before, .menu[data-page="controls"]::before {
+  background: rgb(10 6 24 / 0.86);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.menu__brand { position: absolute; left: 7vw; top: 10vh; max-width: 40vw; }
+.menu[data-root="pause"] .menu__brand, .menu[data-page="settings"] .menu__brand, .menu[data-page="controls"] .menu__brand { display: none; }
+
+.menu__heading {
+  --size: max(11px, calc(2.4 * var(--u)));
+  position: absolute;
+  left: 0;
+  top: -28vh;   /* 12vh from the top of the screen: it sits inside .menu__nav, which starts at 40vh */
+  transform-origin: left center;
+  letter-spacing: 0.3em;
+  white-space: nowrap;
+  color: var(--pink);
+  text-shadow: var(--shadow);
+}
+.menu__heading:empty, .menu.has-panel .menu__heading { display: none; }
+
+/* ---- the root list (title and pause) */
+
+.menu__nav { position: absolute; left: 7vw; top: 40vh; }
+.menu.has-panel .menu__nav { display: none; }
+.menu__list .row {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: calc(1.6 * var(--u));
+  height: calc(8 * var(--u));
+  padding-left: calc(2.4 * var(--u));
+  color: var(--ink-55);
+  cursor: pointer;
+  transition: transform 120ms ease-out, color 120ms ease-out;
+  text-shadow: var(--shadow);
+}
+.menu__list .row__label { --size: calc(6 * var(--u)); white-space: nowrap; }
+/* The detail sits on the label's baseline, which the stretch lowers a little from where layout has it. */
+.menu__list .row__detail { position: relative; top: calc(0.9 * var(--u) * (1 - var(--squeeze))); font-family: var(--text); font-size: max(11px, calc(1.6 * var(--u))); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; }
+.menu__list .row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  bottom: auto;
+  width: calc(0.9 * var(--u));
+  height: calc(4.8 * var(--u));
+  margin-top: calc(-2.4 * var(--u));
+  background: var(--pink);
+  transform: var(--lean);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.menu__list .row.is-focus { color: var(--ink); background: none; transform: translateX(calc(1.6 * var(--u))); }
+.menu__list .row.is-focus::before { opacity: 1; }
+.menu__list .row.is-focus .row__label { text-shadow: var(--shadow), 0 0 calc(2 * var(--u)) rgb(255 46 136 / 0.45); }
+.menu__list .row.is-disabled { color: var(--ink-25); cursor: default; }
+.menu__list .row:focus-visible { outline: none; }
+
+/* Items enter with a short stagger from the left. */
+.menu.is-on .menu__list .row { animation: menu-enter 180ms ease-out backwards; }
+.menu__list .row:nth-child(2) { animation-delay: 30ms; }
+.menu__list .row:nth-child(3) { animation-delay: 60ms; }
+.menu__list .row:nth-child(4) { animation-delay: 90ms; }
+.menu__list .row:nth-child(5) { animation-delay: 120ms; }
+.menu__list .row:nth-child(6) { animation-delay: 150ms; }
+@keyframes menu-enter { from { opacity: 0; transform: translateX(calc(-2 * var(--u))); } }
+
+/* ---- hint line and description */
+
+.menu__hints { position: absolute; left: 7vw; bottom: 5vh; }
+.menu__hint { display: flex; gap: calc(3 * var(--u)); font-size: max(11px, calc(1.5 * var(--u))); color: var(--ink-dim); white-space: nowrap; }
+.menu__hint-item { display: inline-flex; align-items: center; gap: calc(0.6 * var(--u)); }
+.menu__hint-item .key { margin-right: calc(0.2 * var(--u)); }
+.menu.has-panel .menu__hint--list, .menu:not(.has-panel) .menu__hint--page, .menu:not(.has-tabs) .menu__hint-item--tabs { display: none; }
+.menu__desc {
+  position: absolute;
+  left: 7vw;
+  bottom: 11vh;
+  max-width: 60vw;
+  font-size: max(11px, calc(1.8 * var(--u)));
+  line-height: 1.4;
+  color: var(--ink-70);
+}
+
+/* ---- pages: a sub-page in the left column, or a wide page for settings and controls */
+
+.menu__panel { display: none; position: absolute; left: 7vw; top: 22vh; width: max(36vw, calc(46 * var(--u))); }
+/* Under the wordmark (title screen, narrow pages) the page starts below it: 10vh plus the
+   wordmark's height, which is 32vh on a 16:9 window and 22vh only where there is no wordmark. */
+.menu:not([data-root="pause"]) .menu__panel:not(.is-wide) { top: max(22vh, calc(10vh + 22 * var(--u))); }
+.menu.has-panel .menu__panel { display: block; animation: page-enter 150ms ease-out; }
+@keyframes page-enter { from { opacity: 0; } }
+.menu__panel.is-wide { top: 8vh; width: min(60vw, calc(120 * var(--u))); }
+
+.panel__head { display: grid; justify-items: start; gap: calc(0.6 * var(--u)); }
+.panel__back {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(0.5 * var(--u));
+  font-size: max(11px, calc(1.5 * var(--u)));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.panel__back .icon { width: 1.2em; height: 1.2em; }
+.panel__back:hover { color: var(--ink); }
+.panel__title { --size: calc(4.2 * var(--u)); margin: var(--pad) 0; transform-origin: left center; text-shadow: var(--shadow); }
+
+/* Heading at 8vh, tabs at 16vh, rows from 24vh: the gaps absorb the head's own height. */
+.panel__tabs { display: none; gap: calc(0.6 * var(--u)); margin-top: max(calc(0.8 * var(--u)), calc(8vh - 6.7 * var(--u))); }
+.panel__tabs.is-on { display: flex; }
+.panel__tab {
+  --size: max(11px, calc(2.2 * var(--u)));
+  --box: calc(4.4 * var(--u));
+  display: grid;
+  place-items: center;
+  padding: 0 calc(2.2 * var(--u));
+  color: var(--ink-70);
+  cursor: pointer;
+}
+.panel__tab.is-on { background: var(--ink); color: var(--night); }
+
+.panel__body {
+  margin-top: calc(3 * var(--u));
+  max-height: calc(65vh - 10 * var(--u));   /* clear of the description line */
+  overflow-y: auto;
+  overflow-x: hidden;   /* the lean of the chips reaches a pixel past the edge; it is not a scroll */
+  scroll-snap-type: y mandatory;
+  overscroll-behavior: contain;
+}
+/* A bare pink line for a scrollbar. Where the legacy pseudo-elements exist they give exactly that;
+   the standard properties, which would bring back arrow buttons there, are for the other browsers. */
+@supports not selector(::-webkit-scrollbar) {
+  .panel__body { scrollbar-width: thin; scrollbar-color: var(--pink) transparent; }
+}
+.menu__panel.is-wide .panel__body { margin-top: max(calc(1.2 * var(--u)), calc(8vh - 4.4 * var(--u))); max-height: calc(45 * var(--u)); }   /* nine rows */
+.panel__body::-webkit-scrollbar { width: calc(0.3 * var(--u)); background: transparent; }
+.panel__body::-webkit-scrollbar-thumb { background: var(--pink); }
+.rows { display: grid; }
+
+/* ---- rows of a page */
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(2 * var(--u));
+  min-height: calc(5 * var(--u));
+  padding: 0 calc(1.6 * var(--u));
+  scroll-snap-align: start;
+  cursor: pointer;
+  outline: none;
+}
+.row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: calc(0.8 * var(--u));
+  bottom: calc(0.8 * var(--u));
+  width: calc(0.4 * var(--u));
+  background: var(--pink);
+  opacity: 0;
+}
+.row.is-focus { background: var(--ink-08); }
+.row.is-focus::before { opacity: 1; }
+.row__label { --size: max(11px, calc(2.1 * var(--u))); transform-origin: left center; white-space: nowrap; }
+.row__control { display: inline-flex; align-items: center; justify-content: flex-end; gap: calc(0.8 * var(--u)); }
+.row__value { --size: max(11px, calc(2.1 * var(--u))); min-width: calc(7 * var(--u)); text-align: right; white-space: nowrap; transform-origin: right center; }
+.row__value--switch { color: var(--ink-dim); min-width: calc(4 * var(--u)); }
+.row__value--switch.is-on { color: var(--cyan); }
+.row__step { display: inline-grid; place-items: center; width: calc(2.4 * var(--u)); height: calc(2.4 * var(--u)); color: var(--ink-70); cursor: pointer; }
+.row__step .icon { width: calc(1.6 * var(--u)); height: calc(1.6 * var(--u)); }
+.row__step.is-off { opacity: 0.25; cursor: default; }
+.row.is-focus .row__step:not(.is-off):hover { color: var(--ink); }
+
+.slider {
+  position: relative;
+  width: calc(18 * var(--u));
+  height: calc(2.4 * var(--u));
+  cursor: pointer;
+  touch-action: none;
+}
+.slider::before, .slider__fill, .slider__knob { position: absolute; top: 50%; }
+.slider::before { content: ""; left: 0; right: 0; height: calc(0.35 * var(--u)); margin-top: calc(-0.175 * var(--u)); background: var(--ink-25); }
+.slider__fill { left: 0; width: calc(var(--fill, 0) * 100%); height: calc(0.35 * var(--u)); margin-top: calc(-0.175 * var(--u)); background: var(--pink); }
+.slider__knob {
+  left: calc(var(--fill, 0) * 100%);
+  width: calc(0.5 * var(--u));
+  height: calc(1.6 * var(--u));
+  margin: calc(-0.8 * var(--u)) 0 0 calc(-0.25 * var(--u));
+  background: var(--ink);
+  transform: var(--lean);
+}
+
+/* Pick-one rows: text choices as tabs, the current one a white box. */
+.row--pick { flex-wrap: wrap; }
+.pick { display: flex; flex-wrap: wrap; gap: calc(0.6 * var(--u)); justify-content: flex-end; }
+.pick__pill {
+  --size: max(11px, calc(1.8 * var(--u)));
+  --box: calc(3.4 * var(--u));
+  display: grid;
+  place-items: center;
+  padding: 0 calc(1.2 * var(--u));
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.pick__pill.is-on { background: var(--ink); color: var(--night); }
+/* In the left column the choices sit under their heading rather than beside it. */
+.menu__panel:not(.is-wide) .row--pick { flex-direction: column; align-items: flex-start; gap: calc(1.2 * var(--u)); padding-top: calc(1.2 * var(--u)); padding-bottom: calc(1.2 * var(--u)); }
+.menu__panel:not(.is-wide) .pick { justify-content: flex-start; }
+.menu__panel:not(.is-wide) .pick__pill { --size: max(11px, calc(2.4 * var(--u))); --box: calc(4 * var(--u)); }
+.menu__panel:not(.is-wide) .row__label { --size: max(11px, calc(2.4 * var(--u))); letter-spacing: 0.2em; color: var(--ink-dim); }
+
+/* Read-only rows. */
+.row-note { padding: calc(0.8 * var(--u)) calc(1.6 * var(--u)); font-size: max(11px, calc(1.5 * var(--u))); line-height: 1.5; color: var(--ink-dim); scroll-snap-align: start; }
+.device { display: grid; height: calc(5 * var(--u)); padding-block: 0; align-content: center; gap: calc(0.2 * var(--u)); }
+.device__name { --size: max(11px, calc(2.1 * var(--u))); color: var(--ink); transform-origin: left center; white-space: nowrap; }
+.device__line { font-size: max(11px, calc(1.5 * var(--u))); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.keys { padding: calc(1.6 * var(--u)) calc(1.6 * var(--u)) calc(0.8 * var(--u)); scroll-snap-align: start; }
+.keys__title { --size: max(11px, calc(1.6 * var(--u))); transform-origin: left center; letter-spacing: 0.2em; color: var(--ink-dim); margin-bottom: calc(1.2 * var(--u) + var(--pad)); }
+.keys__row { display: flex; align-items: center; justify-content: space-between; gap: calc(2 * var(--u)); min-height: calc(3.6 * var(--u)); }
+.keys__label { font-size: max(11px, calc(1.9 * var(--u))); color: var(--ink); }
+.keys__caps { display: inline-flex; gap: calc(0.5 * var(--u)); }
+
+/* ------------------------------------------------------------------ garage */
+
+/* Drawn over the 3D garage. Everything keeps to the edges: the car and its reflection in the
+   floor stay clear, and nothing tints the whole picture. Three soft corner shades give the type
+   something dark to sit on; the layer takes no pointer events, only its buttons do, so a drag
+   anywhere else turns the view. */
+/* --edge: how far the blocks stand in from the sides (more on a touch screen, whose arrows are finger-wide). */
+.garage { --edge: 7vw; pointer-events: none; color: var(--ink); }
+/* Beyond 2.4:1 the blocks stop following the corners, as the instruments of the HUD do. */
+.garage.is-on { left: max(0px, calc(50% - 120 * var(--u))); right: max(0px, calc(50% - 120 * var(--u))); }
+.garage.is-on { display: block; animation: page-enter 200ms ease-out; }
+/* Soft shade under the three blocks of type and nowhere else: the room is lit, and its turntable has bright rims. */
+.garage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 44vw 30vh at 14vw 17vh, rgb(10 6 24 / 0.66), rgb(10 6 24 / 0.56) 50%, transparent 100%),
+    radial-gradient(ellipse 36vw 30vh at 15vw 84vh, rgb(10 6 24 / 0.6), transparent 100%),
+    radial-gradient(ellipse 30vw 32vh at calc(100% - 13vw) 82vh, rgb(10 6 24 / 0.6), transparent 100%);
+}
+.garage__back, .garage__arrow, .garage__swatch, .garage__drive { pointer-events: auto; cursor: pointer; }
+
+/* Upper left: where you are, the car, its line, and one line of news about a build. */
+.garage__head { position: absolute; left: calc(var(--edge) + var(--safe-left)); top: calc(8vh + var(--safe-top)); display: grid; justify-items: start; }
+.garage__back {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(0.5 * var(--u));
+  margin-bottom: calc(2.2 * var(--u));
+  font-size: max(11px, calc(1.5 * var(--u)));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-hud);
+  text-shadow: var(--shadow-small);
+}
+.garage__back .icon { width: 1.2em; height: 1.2em; }
+.garage__back:hover { color: var(--ink); }
+.garage__place { --size: max(11px, calc(2.2 * var(--u))); transform-origin: left center; letter-spacing: 0.3em; text-shadow: var(--shadow); }
+/* The accent is a mark beside the word, not the word: pink letters are lost on a wall lit pink. */
+.garage__kicker::before { content: ""; display: inline-block; width: 0.32em; height: 0.95em; margin-right: 0.8em; vertical-align: -0.12em; background: var(--pink); transform: var(--lean); box-shadow: 0 0 calc(0.4 * var(--u)) rgb(10 6 24 / 0.8); }
+.garage__count { margin-left: 1.2em; color: var(--ink-hud); letter-spacing: 0.16em; }
+.garage:not(.has-choice) .garage__count { display: none; }
+.garage__name {
+  --size: calc(9 * var(--u));
+  margin-inline: 0;
+  margin-top: calc(1.2 * var(--u) + var(--pad));
+  transform-origin: left center;
+  letter-spacing: 0.02em;
+  text-shadow: var(--shadow), 0 0 calc(3 * var(--u)) rgb(255 46 136 / 0.35);
+}
+.garage__line { margin-top: calc(1 * var(--u)); font-size: max(12px, calc(1.9 * var(--u))); letter-spacing: 0.04em; color: var(--ink-hud); text-shadow: var(--shadow-small); }
+.garage__note {
+  min-height: 1.3em;   /* held open, so that news about a build moves nothing */
+  margin-top: calc(1.4 * var(--u));
+  font-size: max(11px, calc(1.5 * var(--u)));
+  line-height: 1.3;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: var(--shadow-small);
+}
+.garage.is-building .garage__note { animation: garage-wait 1.4s ease-in-out infinite; }
+.garage.is-failed .garage__note { letter-spacing: 0.06em; text-transform: none; color: var(--ink); }
+/* The accent marks the line; the words stay white, which reads over pink light as well as over cyan. */
+.garage.is-failed .garage__note::before { content: ""; display: inline-block; width: 0.55em; height: 0.55em; margin-right: 0.7em; background: var(--pink); transform: var(--lean); }
+@keyframes garage-wait { 50% { opacity: 0.45; } }
+
+/* Side edges: previous and next car, as tall slim chevrons. */
+.garage__arrow {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: calc(7 * var(--u));
+  height: calc(16 * var(--u));
+  margin-top: calc(-8 * var(--u));
+  color: var(--ink-hud);
+  filter: drop-shadow(0 0 calc(0.4 * var(--u)) rgb(10 6 24 / 0.9));
+  transition: color 120ms ease-out, transform 120ms ease-out;
+}
+.garage__arrow--previous { left: calc(1.5vw + var(--safe-left)); }
+.garage__arrow--next { right: calc(1.5vw + var(--safe-right)); }
+.garage__arrow .icon { width: calc(6.4 * var(--u)); height: calc(6.4 * var(--u)); stroke-width: 1.1; }
+.garage__arrow:hover { color: var(--pink); }
+.garage__arrow--previous:hover { transform: translateX(calc(-0.4 * var(--u))); }
+.garage__arrow--next:hover { transform: translateX(calc(0.4 * var(--u))); }
+.garage:not(.has-choice) .garage__arrow { display: none; }
+
+/* Along the bottom: statistics at the left, colours and Drive at the right. */
+.garage__foot {
+  position: absolute;
+  left: calc(var(--edge) + var(--safe-left));
+  right: calc(var(--edge) + var(--safe-right));
+  bottom: calc(9.5vh + var(--safe-bottom));   /* the tyres stand at 70 % of the height: the blocks begin below them */
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(4 * var(--u));
+}
+
+.garage__stats { display: grid; row-gap: calc(0.3 * var(--u)); }
+/* The columns have floors in pixels: on a small screen the type stops shrinking, and so must they. */
+.stat { display: grid; grid-template-columns: max(78px, calc(13 * var(--u))) max(64px, calc(10 * var(--u))) max(48px, calc(12 * var(--u))); column-gap: calc(1.5 * var(--u)); align-items: center; white-space: nowrap; }
+.stat__label { --size: max(11px, calc(1.7 * var(--u))); transform-origin: left center; letter-spacing: 0.2em; color: var(--ink-hud); text-shadow: var(--shadow-small); }
+.stat__figure { --size: max(15px, calc(2.8 * var(--u))); transform-origin: right center; text-align: right; font-variant-numeric: tabular-nums; text-shadow: var(--shadow); }
+.stat__unit { margin-left: 0.3em; font-size: 0.6em; letter-spacing: 0.1em; color: var(--ink-hud); }
+.stat__bar { position: relative; height: 2px; height: max(2px, round(calc(0.3 * var(--u)), 1px)); background: var(--ink-25); box-shadow: 0 0 0 1px rgb(10 6 24 / 0.5), 0 0 calc(0.6 * var(--u)) rgb(10 6 24 / 0.85); }
+/* Shortened by clipping, not by scaling: the line keeps whole pixels and the four look alike. */
+.stat__fill { position: absolute; inset: 0; background: var(--ink); clip-path: inset(0 calc((1 - var(--fill, 0)) * 100%) 0 0); transition: clip-path 260ms ease-out; }
+/* A single car has nothing to be compared with: the figures stand alone. */
+.garage:not(.has-choice) .stat { grid-template-columns: max(78px, calc(13 * var(--u))) max(64px, calc(10 * var(--u))); }
+.garage:not(.has-choice) .stat__bar { display: none; }
+/* No wider than the rows above it (it adds nothing to the block's own width), in even lines if it must break. */
+/* One line that may run past the rows above it: with a single car there are no bars to give it room. */
+.garage__layout { width: 0; min-width: 100%; white-space: nowrap; margin-top: calc(1 * var(--u)); font-size: max(11px, calc(1.5 * var(--u))); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-hud); text-shadow: var(--shadow-small); }
+
+.garage__side { display: grid; justify-items: end; }
+.garage__label { --size: max(11px, calc(1.7 * var(--u))); transform-origin: right center; letter-spacing: 0.2em; color: var(--ink-hud); text-shadow: var(--shadow-small); }
+/* --columns comes from garage.js: more colours than fit one row are shared evenly between rows. */
+.garage__swatches { display: grid; grid-template-columns: repeat(var(--columns, 6), auto); justify-content: end; gap: calc(1 * var(--u)); margin-top: calc(1.4 * var(--u)); padding: calc(0.5 * var(--u)); transition: opacity 150ms ease-out; }
+/* A colour chip: the paint, and over it the light a finish of that kind throws back. */
+.garage__swatch {
+  width: calc(5 * var(--u));
+  height: calc(3.2 * var(--u));
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0.2), rgb(255 255 255 / 0) 42%, rgb(0 0 0 / 0.16)), var(--paint);
+  transform: var(--lean);
+  outline: calc(0.3 * var(--u)) solid transparent;
+  outline-offset: calc(0.2 * var(--u));
+  box-shadow: 0 0 calc(0.6 * var(--u)) rgb(10 6 24 / 0.7);
+}
+.garage__swatch--metallic {
+  background:
+    linear-gradient(104deg, rgb(255 255 255 / 0) 22%, rgb(255 255 255 / 0.62) 46%, rgb(255 255 255 / 0) 64%),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.12), rgb(0 0 0 / 0.34)),
+    var(--paint);
+}
+.garage__swatch--pearl {
+  background:
+    linear-gradient(112deg, rgb(255 120 215 / 0.5), rgb(255 255 255 / 0.42) 42%, rgb(70 225 255 / 0.55)),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.1), rgb(0 0 0 / 0.2)),
+    var(--paint);
+}
+.garage__swatch.is-on { outline-color: var(--ink); }
+.garage__swatch:not(.is-on):hover { outline-color: var(--ink-55); }
+.garage.is-building .garage__swatches { opacity: 0.3; pointer-events: none; }
+.garage.is-building .garage__swatch { pointer-events: none; }
+.garage__caption { --size: max(11px, calc(1.9 * var(--u))); margin-top: calc(1 * var(--u) + var(--pad)); transform-origin: right center; color: var(--ink); text-shadow: var(--shadow); }
+
+.garage__drive {
+  --size: calc(3.4 * var(--u));
+  --box: calc(6.4 * var(--u));
+  display: grid;
+  place-items: center;
+  min-width: calc(24 * var(--u));
+  margin-top: calc(2.6 * var(--u) + var(--pad));
+  padding: 0 calc(4 * var(--u));
+  transform-origin: right center;
+  background: var(--pink);
+  color: var(--night);
+  letter-spacing: 0.14em;
+  box-shadow: 0 0 calc(2.4 * var(--u)) var(--pink-glow);
+  transition: background-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.garage__drive:hover { background: var(--ink); box-shadow: 0 0 calc(2.4 * var(--u)) rgb(255 255 255 / 0.4); }
+.garage__drive.is-disabled { background: rgb(10 6 24 / 0.4); color: var(--ink-35); box-shadow: inset 0 0 0 calc(0.12 * var(--u)) var(--ink-35); cursor: default; }
+
+/* Foot: the prompts of the device in use. */
+.garage__prompts { position: absolute; left: calc(var(--edge) + var(--safe-left)); bottom: calc(4.2vh + var(--safe-bottom)); text-shadow: var(--shadow-small); }
+.garage__prompts .menu__hint { color: var(--ink-hud); }
+.ui:not([data-input="keys"]) .garage__prompt--keys, .ui:not([data-input="pad"]) .garage__prompt--pad { display: none; }
+
+/* A touch screen: no prompts, the block moves down into their place, and everything pressed is finger-sized. */
+.ui.is-touch .garage { --edge: max(7vw, 1.5vw + 52px); }
+.ui.is-touch .garage__foot { bottom: calc(5vh + var(--safe-bottom)); }
+.ui.is-touch .garage__back { min-width: 44px; min-height: 40px; margin-bottom: calc(0.6 * var(--u)); font-size: max(13px, calc(1.5 * var(--u))); }
+.ui.is-touch .garage__arrow { width: max(48px, calc(7 * var(--u))); }
+.ui.is-touch .garage__swatch { width: max(40px, calc(5 * var(--u))); height: max(32px, calc(3.2 * var(--u))); }
+.ui.is-touch .garage__swatches { gap: max(10px, calc(1 * var(--u))); }
+.ui.is-touch .garage__drive { --size: max(18px, calc(3.4 * var(--u))); --box: max(44px, calc(6.4 * var(--u))); min-width: max(140px, calc(24 * var(--u))); }
+/* A phone held sideways: the car leaves a quarter of the width at each side and a quarter of the height below.
+   Finger-sized chips stand two abreast beside its nose, and the line about the layout gives way to the figures. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .ui.is-touch .garage__swatches { grid-template-columns: repeat(2, auto); }
+  .ui.is-touch .garage__foot { bottom: calc(4vh + var(--safe-bottom)); }
+  .garage__layout { display: none; }
+  .ui.is-touch .garage__head { top: calc(3vh + var(--safe-top)); }
+  .ui.is-touch .garage__back { min-height: 36px; margin-bottom: 0; }
+  .stat { grid-template-columns: 78px 56px 40px; }
+}
+
+/* ------------------------------------------------------------------ loading */
+
+.loading {
+  background: var(--night) radial-gradient(ellipse 60vw 60vh at 10% 100%, rgb(65 0 130 / 0.35), transparent 70%);
+  color: var(--ink);
+}
+.loading__wordmark { position: absolute; left: 7vw; top: 10vh; max-width: 40vw; }
+.loading__progress { position: absolute; left: 7vw; bottom: 12vh; width: 40vw; }
+.loading__row { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: calc(1.6 * var(--u)); }
+.loading__label { font-size: max(11px, calc(1.6 * var(--u))); letter-spacing: 0.2em; color: var(--ink-dim); }
+.loading__percent { --size: max(11px, calc(2.4 * var(--u))); transform-origin: right center; font-variant-numeric: tabular-nums; }
+.loading__bar { position: relative; height: calc(0.5 * var(--u)); background: rgb(255 255 255 / 0.15); }
+.loading__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--progress, 0) * 100%);
+  background: var(--pink);
+  transition: width 200ms ease-out;
+}
+.loading__fill::after { content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: calc(1.2 * var(--u)); max-width: 100%; background: var(--cyan); }
+.loading__tip { position: absolute; left: 7vw; bottom: 5vh; max-width: 60vw; font-size: max(11px, calc(1.5 * var(--u))); color: rgb(255 255 255 / 0.5); }
+.loading.is-failed .loading__label { color: var(--warn); letter-spacing: 0.05em; text-transform: none; }
+.loading.is-failed .loading__fill { background: var(--warn); }
+.loading.is-failed .loading__fill::after { display: none; }
+
+/* ------------------------------------------------------------------ error */
+
+.error {
+  pointer-events: auto;
+  background: rgb(10 6 24 / 0.94);
+  overflow: auto;
+}
+.error.is-on { display: grid; place-items: start; }
+.error__card { margin: 12vh 7vw; max-width: min(86vw, calc(110 * var(--u))); }
+.error__kicker { --size: max(11px, calc(2.4 * var(--u))); transform-origin: left center; letter-spacing: 0.3em; color: var(--pink); }
+.error__title { --size: calc(4.2 * var(--u)); margin: calc(1.2 * var(--u) + var(--pad)) 0 calc(2 * var(--u) + var(--pad)); transform-origin: left center; }
+.error__summary { margin: 0 0 calc(1.6 * var(--u)); font-size: max(12px, calc(1.9 * var(--u))); line-height: 1.5; color: var(--ink-70); }
+.error__steps { margin: 0 0 calc(2.4 * var(--u)); padding-left: 1.2em; font-size: max(12px, calc(1.8 * var(--u))); line-height: 1.6; color: var(--ink-70); }
+.error__reload {
+  --size: max(11px, calc(2.2 * var(--u)));
+  --box: calc(4.4 * var(--u));
+  appearance: none;
+  padding: 0 calc(2.2 * var(--u));
+  border: solid var(--ink);
+  border-width: calc(0.12 * var(--u) * var(--squeeze)) calc(0.12 * var(--u));
+  background: var(--ink);
+  color: var(--night);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.error__reload:hover { background: transparent; color: var(--ink); }
+.error__reload:focus-visible { outline: calc(0.2 * var(--u)) solid var(--cyan); outline-offset: calc(0.3 * var(--u)); }
+.error__technical {
+  display: none;
+  margin: calc(2.4 * var(--u)) 0 0;
+  padding: calc(1.2 * var(--u));
+  max-height: 30vh;
+  overflow: auto;
+  border-left: calc(0.4 * var(--u)) solid var(--pink);
+  font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.error__technical.is-on { display: block; }
+
+/* ------------------------------------------------------------------ narrow, coarse, reduced motion */
+
+@media (max-width: 760px), (orientation: portrait) {
+  .menu::before { background: linear-gradient(to right, rgb(21 5 45 / 0.8), rgb(21 5 45 / 0.55)); }
+  .menu__brand, .loading__wordmark { max-width: 86vw; }
+  .menu__panel, .menu__panel.is-wide { width: 86vw; }
+  .menu__desc, .loading__tip { max-width: 86vw; }
+  .loading__progress { width: 86vw; }
+  /* The garage on an upright screen: the car is small in the middle, so the bottom is a column. */
+  .garage::before {
+    background:
+      linear-gradient(to bottom, rgb(10 6 24 / 0.6), transparent 30vh),
+      linear-gradient(to top, rgb(10 6 24 / 0.8), rgb(10 6 24 / 0.66) 32vh, transparent 46vh);   /* the light box lies mirrored in the floor here */
+  }
+  .garage, .ui.is-touch .garage { --edge: 7vw; }
+  .garage__foot { flex-direction: column; align-items: stretch; gap: calc(3 * var(--u)); }
+  /* The car reaches from edge to edge here, so the arrows go up beside Back, clear of it. */
+  .garage__arrow, .ui.is-touch .garage__arrow { top: calc(8vh - 13px + var(--safe-top)); width: 44px; height: 40px; margin-top: 0; }
+  .ui.is-touch .garage__arrow { top: calc(8vh + var(--safe-top)); }   /* Back is as tall as they are on a touch screen */
+  .garage__arrow .icon { width: 26px; height: 26px; stroke-width: 1.4; }
+  .garage__arrow--previous { left: auto; right: calc(7vw + 40px + var(--safe-right)); }
+  .garage__arrow--next { right: calc(7vw - 8px + var(--safe-right)); }
+  .stat, .garage:not(.has-choice) .stat { grid-template-columns: max(78px, calc(13 * var(--u))) max(64px, calc(10 * var(--u))) 1fr; }
+  .garage__side { justify-items: start; }
+  .garage__label, .garage__caption { transform-origin: left center; }
+  .garage__swatches { justify-content: start; padding-left: 0; }
+  .garage__drive { justify-self: stretch; transform-origin: center; }
+  .garage__prompts .menu__hint { flex-wrap: wrap; row-gap: calc(0.8 * var(--u)); }
+}
+
+@media (pointer: coarse) {
+  .menu__hints { display: none; }
+  .row { min-height: calc(6 * var(--u)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu__list .row, .menu.has-panel .menu__panel, .garage.is-on, .garage.is-building .garage__note { animation: none; }
+  .stat__fill, .garage__arrow { transition: none; }
+  .menu__list .row.is-focus { transform: none; }
+  .hud__banner { transform: var(--lean-type); }
+  .hud__banner { transition: opacity 400ms ease-out; }
+  .hud__banner.is-on { transition: opacity 180ms ease-out; }
+  .toast { transform: translateX(-50%) var(--lean-type); }
+  .gauge.is-limit .gauge__value { animation: none; stroke: var(--pink); }
+  .gauge.is-limit .gauge__gear { animation: none; color: var(--pink); }
+  .gauge.is-boosting .gauge__nitrous { animation: none; }
+}

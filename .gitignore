@@ -1,0 +1,8 @@
+/.vice-import-*/
+/.vice-snapshot/
+/dist/
+/node_modules/
+__pycache__/
+*.pyc
+/vice86-source.zip
+/.cache/
