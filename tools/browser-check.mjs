@@ -274,7 +274,19 @@ if (footOn && reached) {
     if (reloaded.gun.magazine <= g0.magazine) errors.push('gun: ' + (`R did not move a magazine: it went from ${g0.magazine} to ${reloaded.gun.magazine}`));
     // A door: the room has to go up on the same frame the man arrives in it, so this is where a mistake in
     // the interior plumbing shows — a bad mesh, a light list the renderer refused, a room the camera is lost in.
-    const door = await page.evaluate(() => window.__vice.shop());
+    let door = await page.evaluate(() => window.__vice.shop());
+    // A soak ends where the drive ended, and the drive does not know about shops. So if nothing is within
+    // sight of the kerb he stopped on, take the closest door the island has and put his feet beside it: a
+    // check that only runs when the parking was lucky is a check on the parking, not on the plumbing.
+    if (door && door.onFoot && !door.name) {
+      const far = await page.evaluate(() => (window.__vice.nearestShop ? window.__vice.nearestShop() : null));
+      if (far && Number.isFinite(far.x) && Number.isFinite(far.z)) {
+        log('shop', `no door within sight; the nearest is ${far.name} at ${far.metres} m (${far.open ? 'open' : 'shut'})`);
+        await page.evaluate(([x, z]) => window.__vice.walkTo(x, z), [far.x, far.z]);
+        await page.waitForTimeout(1_500);
+        door = await page.evaluate(() => window.__vice.shop());
+      }
+    }
     if (!door || !door.count) warnings.push('there is no shop on the island to walk into (shops.count was 0)');
     else if (!door.onFoot) warnings.push('foot: the man was back in the car before the door could be tried');
     else {

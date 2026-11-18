@@ -165,6 +165,8 @@ export function createHooks() {
     press: (action) => run((g) => g.press(action)),
     /** What the nearest shopfront is, and whether the room behind it is up. See game/shopInfo. */
     shop: (x, z) => run((g) => g.shopInfo(x, z)),
+    /** The nearest shopfront anywhere on the island, open preferred. See game/nearestShop. */
+    nearestShop: () => run((g) => g.nearestShop()),
     /** Move the walker to a spot on foot, so a check does not have to walk there. */
     walkTo: (x, z) => run((g) => g.walkTo(x, z)),
     /** The walker, the gun and the pocket, as the game keeps them. */

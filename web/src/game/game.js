@@ -1248,6 +1248,27 @@ export function createGame(deps) {
       return true;
     },
 
+    /**
+     * The closest shopfront on the island, preferring one that is open: for a script (or a person with a map
+     * and no memory) that wants to know where the nearest door is from wherever they are standing, rather
+     * than the offer report, which only sees 60 metres and is meant for the HUD.
+     */
+    nearestShop() {
+      const hour = clock.timeOfDay;
+      let open = null, openD = Infinity, any = null, anyD = Infinity;
+      for (const s of shops.list) {
+        const d = Math.hypot(s.x - player.pos[0], s.z - player.pos[2]);
+        if (d < anyD) { anyD = d; any = s; }
+        if (d < openD && shops.offer(s, { x: s.x, z: s.z, hour }).action === 'enter') { openD = d; open = s; }
+      }
+      const s = open || any;
+      if (!s) return null;
+      return {
+        name: s.name, kind: s.kind, x: s.x, z: s.z, hours: s.hours, till: s.till,
+        metres: Math.round((open ? openD : anyD)), open: !!open, shops: shops.count,
+      };
+    },
+
     /** Whether the player is on the pavement rather than in the car, and what each of them is doing. */
     get onFoot() { return onFoot; },
     footState() { return foot.snapshot(); },
