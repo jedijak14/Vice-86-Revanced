@@ -358,7 +358,7 @@ export function createGame(deps) {
 
   /** Out again, with whatever the visit cost or earned. */
   function shopOut() {
-    const at = shopRoom.stepsoff([0, 0, 0]);
+    const at = shopRoom.doorstep([0, 0, 0]);
     inShop = false;
     clock.interior = false;
     shopRoom.leave();
