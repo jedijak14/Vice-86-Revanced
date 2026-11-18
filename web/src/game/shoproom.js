@@ -67,8 +67,15 @@ export function createShopRoom({ renderer }) {
         statics.push(renderer.addStatic({ mesh, castShadow: PARTS[name], interior: true }));
       }
       const a = set.anchors;
+      // The renderer's room box is in world numbers: it is what the room's shadow map is fitted to, what
+      // decides which casters are inside the walls, and what the haze is bounded by (render/lightstate.js
+      // `_renderRoomShadow`). The anchors' own box is in the room's frame, because the room is built turned
+      // and placed rather than moved (see the header). Handing over the unplaced one puts a room at the origin
+      // with a man standing 963 metres away in it: nothing is inside the box, so nothing is lit, and a closed
+      // room that culls the street is a black screen. `set.bounds` is the placed version of the same box.
       shopRoom.room = {
-        min: a.room.min.slice(), max: a.room.max.slice(), version: 0,
+        min: set.bounds.slice(0, 3), max: set.bounds.slice(3, 6), version: 0,
+        // Already placed, like the box: `interior.js` turns and moves the light box with the geometry.
         lightBox: {
           centre: a.lightBox.centre.slice(), u: a.lightBox.u.slice(), v: a.lightBox.v.slice(),
           radiance: a.lightBox.radiance.slice(),

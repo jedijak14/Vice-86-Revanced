@@ -324,14 +324,25 @@ if (footOn && reached) {
     if (!door || !door.count) warnings.push('there is no shop on the island to walk into (shops.count was 0)');
     else if (!door.onFoot) warnings.push('foot: the man was back in the car before the door could be tried');
     else {
+      // Same rule as the car door: a press during a scene change is dropped on purpose, so the check waits for
+      // the game to be idle before it reaches for a handle, and reaches again if it was still in the fade.
+      const idle = async (tries = 30) => {
+        for (let i = 0; i < tries; i++) {
+          const s = await at();
+          if (s.transition === 'none') return true;
+          await page.waitForTimeout(1_000);
+        }
+        return false;
+      };
       await page.evaluate(([x, z]) => window.__vice.walkTo(x, z), [door.x, door.z]);
-      await page.waitForTimeout(1_500);
+      await idle();
       await page.evaluate(() => window.__vice.press('shop'));
       let gone = null;
       for (let i = 0; i < 24; i++) {
         gone = await page.evaluate(() => window.__vice.shop());
         if (gone && gone.inside) break;
         await page.waitForTimeout(1_500);
+        if (await idle(3)) await page.evaluate(() => window.__vice.press('shop'));
       }
       const seen = await at();
       log('shop', `${gone.name} (${gone.kind}, ${gone.action}) · inside ${JSON.stringify(gone.inside)} · room ${gone.room} · offer "${gone.label}" · cash ${seen.cash} · street ${seen.streetSeconds}s in ${seen.frames} frames`);
@@ -339,10 +350,13 @@ if (footOn && reached) {
       else {
         const stats = await page.evaluate(() => window.__vice.stats());
         log('shop', `inside: room ${gone.room}, lights ${gone.lights}, hold ${gone.holding} at ${Math.round((gone.progress || 0) * 100)}%, tiles ${stats.tilesLoaded}, street clock ${(stats.streetSeconds || 0).toFixed(2)} s`);
+        await idle();
         await page.evaluate(() => window.__vice.press('shop'));   // and back out the same way he came in
         for (let i = 0; i < 16; i++) {
           const s = await page.evaluate(() => window.__vice.shop());
           if (s && !s.inside) break;
+          await page.waitForTimeout(1_500);
+          if (await idle(3)) await page.evaluate(() => window.__vice.press('shop'));
           await page.waitForTimeout(1_500);
         }
         const back = await page.evaluate(() => window.__vice.shop());
