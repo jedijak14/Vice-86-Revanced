@@ -34,7 +34,7 @@ export class Targets {
     s.gbuffer = [make('g0', gl.RGBA8), make('g1', gl.RGBA16F), make('g2', gl.RGBA8), make('g3', gl.RGBA16F)];
     make('depth', gl.DEPTH_COMPONENT24);
     make('lit', gl.RGBA16F, width, height, 'linear');
-    make('sceneDepth', gl.R32F);
+    make('sceneDepth', this.ctx.depthFormat || gl.R32F);   // 32-bit where the device allows it, half float on iOS and older mobile (see gl.js)
     make('sceneOpaque', gl.RGBA16F, width, height, 'linear');
     fbo('gbuffer', s.gbuffer, s.depth);
     fbo('lit', [s.lit], s.depth);

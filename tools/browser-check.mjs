@@ -226,10 +226,15 @@ if (footOn && reached) {
   // Press until the game answers. A press during a fade is dropped on purpose (the key belongs to the
   // picture the player is watching, not to the one arriving), and on a software renderer a fade takes a
   // minute of wall time, so "press once and look" is a test of timing rather than of walking.
-  for (let i = 0; i < 24 && !out.onFoot; i++) {
-    await page.evaluate(() => window.__vice.press('foot'));
-    await page.waitForTimeout(2_500);
+  // Press when the game is idle, wait when it is not: a press during a fade is dropped on purpose, and a
+  // soak that counts those drops as attempts learns about the fade rather than about walking. Each try is
+  // logged, because "the man never left the car" is worth more with the fade and the hold beside it.
+  for (let i = 0; i < 30 && !out.onFoot; i++) {
+    const now = await at();
+    if (now.transition === 'none') await page.evaluate(() => window.__vice.press('foot'));
+    await page.waitForTimeout(2_000);
     out = await at();
+    log('foot', `try ${i + 1}: transition ${out.transition}, dark for ${out.transitionHeld}s, fade ${out.frameFade}, pending ${out.transitionBusy}, onFoot ${out.onFoot}`);
   }
   const pageErrors = await page.evaluate(() => window.__vice.errors.map((e) => String(e).slice(0, 200)));
   log('foot', `press answered: onFoot ${JSON.stringify(out.onFoot)}, transition ${out.transition}, fade ${out.frameFade}, car ${JSON.stringify((await page.evaluate(() => window.__vice.car())).speed)}, foot ${JSON.stringify(out.foot)}, page errors ${pageErrors.length}`);

@@ -397,6 +397,10 @@ export function describeGraphics(caps, env = readEnvironment()) {
       ? `${env.deviceMemory} GB of memory: the city is held in a small-memory budget.`
       : 'An iOS device that will not say its memory: held in a small-memory budget.');
   }
+  // A device without 32-bit float render targets is not a broken device — the renderer builds the frame in
+  // 16-bit float on it (render/gl.js). The note is here because on an older iPad that line is the proof that
+  // the game noticed and coped, rather than the person having to read a console.
+  if (caps && caps.floatSupport === 'half') reasons.push('HDR is drawn in 16-bit float: this device has no 32-bit float render targets, and the renderer works around it.');
   return { preset, ceiling, family, score, renderer, label, reasons, lowMemory };
 }
 

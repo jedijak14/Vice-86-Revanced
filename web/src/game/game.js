@@ -819,9 +819,13 @@ export function createGame(deps) {
     if (action) action();
   }
 
+  /**
+   * Ages the scene change. `dt` is kept for anything that must agree with the simulation; both the fades and
+   * the dark hold are wall-paced, because they are a duration a person waits, not a distance the street travels.
+   */
   function advanceTransition(dt, realDt = dt) {
     if (transition.stage === 'out') {
-      frame.fade = Math.min(1, frame.fade + dt / FADE_OUT_SECONDS);
+      frame.fade = Math.min(1, frame.fade + realDt / FADE_OUT_SECONDS);
       if (frame.fade >= 1 && (!transition.ready || transition.ready())) runTransitionAction();
     } else if (transition.stage === 'hold') {
       frame.fade = 1;
@@ -831,7 +835,7 @@ export function createGame(deps) {
       const loaded = phase.name === 'garage' || world.isReady(player.pos, NEAR_RADIUS) || transition.held > HOLD_MAX_SECONDS;
       if (loaded && transition.frames > HOLD_MIN_FRAMES && phase.name !== 'boot') transition.stage = 'in';
     } else if (transition.stage === 'in') {
-      frame.fade = Math.max(0, frame.fade - dt / FADE_IN_SECONDS);
+      frame.fade = Math.max(0, frame.fade - realDt / FADE_IN_SECONDS);
       if (frame.fade <= 0) transition.stage = 'none';
     }
   }
@@ -1273,6 +1277,7 @@ export function createGame(deps) {
         // A script that presses a key wants to know whether the game was listening: a fade swallows a
         // press, and a soak harness that cannot see the difference blames the walker for being slow.
         transition: transition.stage, frameFade: Math.round(frame.fade * 100) / 100,
+        transitionHeld: Math.round(transition.held * 100) / 100, transitionBusy: !!transition.action,
         inShop, shop: inShop ? shops.snapshot() : (shopNear ? { inside: shopNear.name, holding: false } : null),
         lowMemory: settings.graphics.lowMemory === true, atlas: null,
       });
@@ -1296,11 +1301,11 @@ export function createGame(deps) {
     frame(dt, frameMs = dt * 1000) {
       const t0 = now();
       handlePresses();
-      // A fade is a picture, so it is paced by `dt`. How long the screen has been dark is not: on a machine
-      // that cannot keep up, the pacer hands the game a fraction of a second for a second and a half of real
-      // time (loop.js, and every software-renderer soak in this repo's history), and a "longest the screen
-      // stays dark" cap counted in those fractions is half an hour of black. The wait is counted in wall
-      // seconds, which is what a person waiting for the street to appear is actually experiencing.
+      // The pacer hands a slow machine a fraction of a second for a second and a half of real time (loop.js,
+      // and every software-renderer soak in this repo's history), so anything measured in *seconds a person
+      // waits* has to be counted in wall seconds: how long the screen stays dark, and how long the fade takes
+      // to cross it. Counted in `dt` instead, a half-second fade is a minute of black on a 5 fps device, which
+      // is the opposite of what a fade is for -- and it is exactly the machine this fork is trying to keep.
       const realDt = Math.max(dt, (frameMs > 0 ? frameMs : 0) / 1000);
       advanceDeparture(phase.name === 'garage' ? dt : 0);
       advanceTransition(dt, realDt);
