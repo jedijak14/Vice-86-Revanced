@@ -234,7 +234,7 @@ if (footOn && reached) {
     if (now.transition === 'none') await page.evaluate(() => window.__vice.press('foot'));
     await page.waitForTimeout(2_000);
     out = await at();
-    log('foot', `try ${i + 1}: transition ${out.transition}, dark for ${out.transitionHeld}s, fade ${out.frameFade}, pending ${out.transitionBusy}, onFoot ${out.onFoot}`);
+    log('foot', `try ${i + 1}: transition ${out.transition}, dark for ${out.transitionHeld}s, fade ${out.frameFade}, pending ${out.transitionBusy}, onFoot ${out.onFoot} · frame ${out.frames}, dt ${out.pacedDt}s real ${out.realDt}s sim ${out.simDt}s, street ${out.streetSeconds}s`);
   }
   const pageErrors = await page.evaluate(() => window.__vice.errors.map((e) => String(e).slice(0, 200)));
   log('foot', `press answered: onFoot ${JSON.stringify(out.onFoot)}, transition ${out.transition}, fade ${out.frameFade}, car ${JSON.stringify((await page.evaluate(() => window.__vice.car())).speed)}, foot ${JSON.stringify(out.foot)}, page errors ${pageErrors.length}`);
@@ -300,7 +300,7 @@ if (footOn && reached) {
         await page.waitForTimeout(1_500);
       }
       const seen = await at();
-      log('shop', `${gone.name} (${gone.kind}, ${gone.action}) · inside ${JSON.stringify(gone.inside)} · room ${gone.room} · offer "${gone.label}" · cash ${seen.cash}`);
+      log('shop', `${gone.name} (${gone.kind}, ${gone.action}) · inside ${JSON.stringify(gone.inside)} · room ${gone.room} · offer "${gone.label}" · cash ${seen.cash} · street ${seen.streetSeconds}s in ${seen.frames} frames`);
       if (!gone || !gone.inside) errors.push('shop: ' + (`the door was pressed at ${door.name} and he never got inside (inside ${gone && gone.inside}, transition ${seen.transition}, fade ${seen.frameFade})`));
       else {
         const stats = await page.evaluate(() => window.__vice.stats());
@@ -384,12 +384,21 @@ if (final) {
   }
 }
 
+// What the *page* says happened, read before the browser goes away. This is the line that tells a stage that
+// stopped answering apart from a stage that was never wired: main.js catches a frame that throws, stops asking
+// for frames and writes the stack into `__vice.errors` — after which every press this script sends is answered
+// by a world that is no longer moving, which looks exactly like a bug in the thing being pressed.
+const pageFaults = await page.evaluate(() => (window.__vice && window.__vice.errors ? window.__vice.errors.map((e) => String(e).slice(0, 400)) : []));
+const pagePhase = await page.evaluate(() => (window.__vice && window.__vice.hooks ? window.__vice.hooks.phase : null));
+if (pageFaults.length) errors.push(`the page faulted (${pageFaults.length}), phase ${pagePhase}: ${pageFaults.slice(-2).join(' || ')}`);
+else if (pagePhase === 'error') errors.push(`the page reported an error phase with nothing in __vice.errors`);
 await browser.close();
 const report = (name, list) => {
   log(name, list.length);
   list.slice(0, 20).forEach((e) => console.log('   ', e));
 };
-report('page errors', errors);
+report('page faults', pageFaults);
+report('check failures', errors);
 report('404s and worse', badResponses);
 report('failed requests', failedRequests);
 report('warnings', warnings);

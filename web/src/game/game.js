@@ -431,6 +431,10 @@ export function createGame(deps) {
   let surroundingsTimer = 0;
   let hornOn = false;
   let physicsMs = 0, gameMs = 0, streetSeconds = 0;
+  // What the frame loop was actually handed, kept for `stats()`: a soak on a software renderer measures the
+  // machine as much as the game, and the only way to tell "the walker is slow" from "this page got six frames
+  // a minute" is to report the clock each subsystem was given. See `frames`, `pacedDt`, `realMs` below.
+  let frameCount = 0, lastPacedDt = 0, lastRealDt = 0, lastSimDt = 0;
   let cameraDistance = 6;
   let wasMeasuring = tuner ? tuner.measuring : false;
   // Changing the car: the id asked for last, and the promise of the change in progress.
@@ -1293,6 +1297,11 @@ export function createGame(deps) {
         physicsMs, gameMs, car: carId, traffic: traffic.count, parked: traffic.parkedCount,
         tilesLoaded: w.tilesLoaded || 0, tilesPending: w.tilesPending || 0, workerMs: w.workerMs || 0,
         streetSeconds: Math.round(streetSeconds * 100) / 100,
+        // Frames the game was asked to draw, and the three clocks that came out of them: the pacer's
+        // (suspension- and cap-clamped), the wall's, and what the street was granted. `frames` growing while
+        // `simDt` stays at the pacer's floor is a starving machine; `frames` frozen is a page nobody pumped.
+        frames: frameCount, pacedDt: Math.round(lastPacedDt * 10000) / 10000,
+        realDt: Math.round(lastRealDt * 10000) / 10000, simDt: Math.round(lastSimDt * 10000) / 10000,
         onFoot, cash: Math.round(purse.cash * 100) / 100,
         foot: onFoot ? foot.snapshot() : null, gun: gun.snapshot(),
         // A script that presses a key wants to know whether the game was listening: a fade swallows a
@@ -1321,6 +1330,7 @@ export function createGame(deps) {
      */
     frame(dt, frameMs = dt * 1000) {
       const t0 = now();
+      frameCount++;
       handlePresses();
       // The pacer hands a slow machine a fraction of a second for a second and a half of real time (loop.js,
       // and every software-renderer soak in this repo's history), so anything measured in *seconds a person
@@ -1328,9 +1338,11 @@ export function createGame(deps) {
       // to cross it. Counted in `dt` instead, a half-second fade is a minute of black on a 5 fps device, which
       // is the opposite of what a fade is for -- and it is exactly the machine this fork is trying to keep.
       const realDt = Math.max(dt, (frameMs > 0 ? frameMs : 0) / 1000);
+      lastPacedDt = dt; lastRealDt = realDt;
       advanceDeparture(phase.name === 'garage' ? dt : 0);
       advanceTransition(dt, realDt);
       const simDt = phase.running ? dt : 0;
+      lastSimDt = simDt;
       const inGarage = phase.name === 'garage';
 
       // Input.
