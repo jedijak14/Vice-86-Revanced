@@ -112,6 +112,8 @@ function buildRows(doc) {
     mission: build('mission', 'target', 'Job'),
     race: build('race', 'flag', 'Race'),
     crew: build('crew', 'link', 'Room'),
+    purse: build('purse', 'jobs', 'Purse'),
+    foot: build('foot', 'person', 'On foot'),
     root: null,
   };
 }
@@ -135,7 +137,7 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
   const rows = buildRows(doc);
   const banner = el(doc, 'div', 'hud__banner');
   const place = el(doc, 'div', 'hud__place');
-  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root);
+  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root, rows.purse.root, rows.foot.root);
 
   const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, police.root, rows.root, banner), map.root, place, gauge.root);
   root.setAttribute('aria-hidden', 'true');   // a visual instrument cluster; nothing here is read out
@@ -159,8 +161,8 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
     police: textWriter(police.text),
     policeOn: classWriter(police.root, 'is-on'),
     policePip: police.pips.map((node) => classWriter(node, 'is-on')),
-    row: ['mission', 'race', 'crew'].map((name) => textWriter(rows[name].text)),
-    rowOn: ['mission', 'race', 'crew'].map((name) => classWriter(rows[name].root, 'is-on')),
+    row: ['mission', 'race', 'crew', 'purse', 'foot'].map((name) => textWriter(rows[name].text)),
+    rowOn: ['mission', 'race', 'crew', 'purse', 'foot'].map((name) => classWriter(rows[name].root, 'is-on')),
     lamps: classWriter(gauge.lamps, 'is-on'),
     brake: classWriter(gauge.brake, 'is-on'),
     nitrous: styleWriter(gauge.nitrous, 'stroke-dashoffset'),
@@ -288,8 +290,8 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
       // Stars, not pips: the wanted level is what the row carries, and the line beside it says what
       // the agency is doing about it. A star that is lit is the department's own gold.
       for (let i = 0; i < police.pips.length; i++) write.policePip[i](model.stars > i);
-      const lines = [model.mission, model.race, model.crew];
-      for (let i = 0; i < 3; i++) {
+      const lines = [model.mission, model.race, model.crew, model.purse, model.foot];
+      for (let i = 0; i < lines.length; i++) {
         write.row[i](lines[i]);
         write.rowOn[i](Boolean(lines[i]));
       }

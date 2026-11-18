@@ -136,3 +136,19 @@ test('a standing body is a capsule, and a shot at the sky misses it', () => {
   assert.equal(shotAt([0, 1, 0], [0, 0, 1], [0, 0, 50], 4), null, 'a man 50 m away was struck by a 4 m shot');
   assert.equal(shotAt([0, 1, 4.9], [0, 0, 1], [0.9, 0, 5], 100), null, 'a man a metre to the side of the line was struck');
 });
+
+test('a gun put away is the gun you pick up, and brass goes in the bag', () => {
+  const gun = createWeapon({ physics: world(), crowd: crowdOf([]), rng: rng(9) });
+  gun.equip('pistol');
+  for (let i = 0; i < 3; i++) { gun.fire(EYE, 1 / gun.weapon.rate); gun.tick(1 / gun.weapon.rate); }
+  assert.equal(gun.inMagazine, WEAPONS.pistol.magazine - 3, 'three shots out of six left a different count');
+  gun.stow();
+  assert.equal(gun.armed, false, 'the gun is still in the hand');
+  gun.equip('pistol');
+  assert.equal(gun.inMagazine, WEAPONS.pistol.magazine - 3, 'drawing it again handed over a fresh magazine');
+  assert.equal(gun.reserve, WEAPONS.pistol.reserve, 'the pouch grew in the glovebox');
+  gun.issue(10);
+  assert.equal(gun.reserve, WEAPONS.pistol.reserve + 10, 'bought brass did not go in the bag');
+  gun.stow(); gun.equip('pistol');
+  assert.equal(gun.reserve, WEAPONS.pistol.reserve + 10, 'the bag forgot what was put in it');
+});

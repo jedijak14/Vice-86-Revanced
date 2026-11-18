@@ -41,7 +41,8 @@ const ASSET_SHARE = Object.freeze({ world: 0.55, models: 0.3, atlas: 0.15 });
 const SCENE_TIMEOUT_SECONDS = 25; // the title scene is shown with whatever has loaded by then
 const SCENE_RADIUS = 140; // m around the car that must be loaded (the same as the game holds a fade for)
 const BLACK_FRAMES = 3; // frames drawn behind the loading screen after warm-up, before the title
-const LOW_ATLAS_SIZE = 2048, ATLAS_SIZE = 4096;
+// The atlas's own size rule (render/atlas.js atlasSize) decides between 4096, 2048 and 1024, on the preset
+// and on whether the device is short of memory; the boot asks it rather than keeping a table of its own.
 const WHEEL_LINE_PIXELS = 16; // a wheel that reports lines or pages instead of pixels
 
 /**
@@ -169,6 +170,14 @@ export async function boot(env) {
     // A forced preset (quality=) is neither measured nor adjusted.
     const tuner = options.quality ? null : autotuneModule.createAutoTuner({ settings, caps: renderer.caps });
     if (tuner) ui.setDeviceInfo(tuner.info);
+    // The memory budget, decided once and before anything is allocated: the device's answer from
+    // ui/detect.js, unless the player has given their own (the settings panel's Memory use, or
+    // ?memory=low / ?memory=full on a browser that will not say what it has, which is what Safari on iOS
+    // is). It has to be this early because the sign atlas is built below it and never rebuilt.
+    if (options.memory === 'low' || options.memory === 'full') settings.graphics.memoryMode = options.memory;
+    settingsModule.applyMemoryMode(settings, tuner
+      ? tuner.info.lowMemory
+      : (await import('./ui/detect.js')).describeGraphics(renderer.caps).lowMemory);
     progress(PROGRESS.renderer, 'Starting the physics');
     await breathe();
 
@@ -211,7 +220,7 @@ export async function boot(env) {
     const atlasReady = loaders.atlas().then(async (atlasModule) => {
       await breathe();
       // The two weakest tiers pay for a full-size texture atlas they cannot show the detail in.
-      const atlas = atlasModule.buildAtlas({ size: settings.graphics.preset === 'low' || settings.graphics.preset === 'ultraLow' ? LOW_ATLAS_SIZE : ATLAS_SIZE });
+      const atlas = atlasModule.buildAtlas({ size: atlasModule.atlasSize(settings.graphics) });
       renderer.setAtlas(atlas);
       done.atlas = 1;
       assetProgress('Painting the surfaces');

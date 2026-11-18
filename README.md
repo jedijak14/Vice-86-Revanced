@@ -41,9 +41,15 @@ The release ships a city with cars in it and nobody on the pavements. This is th
 | File | What it is |
 | --- | --- |
 | `web/src/game/crowd.js` | The people: where they walk, how they answer a car, when they wave a cab down, and the limbs the near ones get. |
-| `web/src/world/people/rig.js` | The nine-bone rig that poses a person — walk, stand, startle, hail — solved to world matrices per part, no skinning. |
-| `web/src/world/people/body.js` | The bodies, built in code with the release's own geometry kit: one merged mesh for the far crowd, one per part for the near. |
+| `web/src/core/gltf.js` | A GLB reader: nodes, one skin, one base-colour texture, animation channels. Refuses what it cannot read. |
+| `web/src/core/animate.js` | Clip sampling and the rig solve, with the walk clock driven by metres travelled so nobody skates. |
+| `web/src/world/people/cast.js` | The cast: five rigged bodies from the vendored packs, one shared clip library, and a person as a mesh whose vertices are rewritten each frame. |
 | `web/src/game/wanted.js` | The wanted record: what each thing you did costs, how the stars ladder up, and how they cool off. |
+| `web/src/game/foot.js` | On foot: a third-person walker with a run, a crouch, a wind, and a car to climb back into. |
+| `web/src/game/weapons.js` | The guns: magazines, a reload, hitscan fired against the crowd, and what a carried gun remembers. |
+| `web/src/game/shops.js` | Shopfronts: which lots have a door, what a bag costs, what a till holds, and when a hold-up is over. |
+| `web/src/game/shoproom.js` | The room behind a door: the set baked into the world at the lot's own yaw, with its lamps and its walls. |
+| `web/src/game/money.js` | The purse: what a race paid and a till took, in bills, and where every dollar came from. |
 | `web/src/game/races.js` | Point-to-point races taken from a kerb — the course walked out of the lane graph, the gates judged by crossing a line. |
 | `web/src/vehicles/traffic/liveries.js` | Paint for the patrol fleet (marked, two-tone, county, unmarked) on the release's own car bodies. |
 | `web/src/game/game.js`, `game/hud.js`, `ui/*` | The HUD's three rows — the job, the race, the crew — the stars beside them, and `V` to take a race. |
@@ -84,8 +90,15 @@ on the road, `?quality=low|medium|high|ultra` overrides the picture, `?seed=`, `
 ```sh
 python3 tools/import_release.py --verify   # offline: the release bytes, the closure, and what is ours
 node --test                                # the dispatch's judgements and the officer's geometry
+python3 tools/vendor_models.py --verify    # every model byte against its manifest, and its licence
+python3 tools/test_vendor_models.py        # the packing and the licence gate themselves
 LD_LIBRARY_PATH=/tmp/chromium-libs node tools/browser-check.mjs --minutes=5 --heat=2
 ```
+
+`--foot=1` adds the pavement to that last check: the car is braked to a stop, the man steps out, runs, empties a
+magazine into the street, reloads, walks into a shop and backs out of it again, and each of those is a line the
+harness fails on rather than a screenshot to squint at. `?memory=low` in `--query=` runs the whole page in the
+small-memory budget an iPad gets.
 
 The last one boots the page in headless Chromium on SwiftShader and reports page errors, missing
 requests, what the dispatch says and what the HUD shows; it needs a Chromium build and its

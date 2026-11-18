@@ -67,6 +67,18 @@ const PARTICLES = [{ max: 384 }, { max: 1536 }, { max: 4096 }];
 const ULTRA_LOW = Object.freeze({ maxLights: 64, sizeNear: 24, perCell: 12, particles: 128, reach: 0.55 });
 // Detail level handed to surface families in uQuality.x: micro detail is skipped below 0.5.
 const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1 };
+/**
+ * What a small-memory device is held to, whatever preset it asked for. These are not about frame rate: they
+ * are the sizes of the buffers that stay alive between frames — the internal resolution (every target in the
+ * renderer scales with its square), the light grid, the particle arena, the reflection probe's faces, and the
+ * two passes that have to keep a whole extra copy of the frame around to work (the mirror fan and any pass
+ * with a history: temporal antialiasing and motion blur). A phone with 3 GB shared with the operating system
+ * and every tab it has open dies on those bytes rather than on the shader maths, so the maths is left alone
+ * and the allocations are capped.
+ */
+const LOW_MEMORY = Object.freeze({
+  scale: 0.5, lights: 96, sizeNear: 24, perCell: 12, particles: 256, probe: 128, shadowSize: 1024, cascades: 2,
+});
 
 /**
  * Resolve a graphics settings object into renderer parameters. Unknown or missing fields fall back to
@@ -85,17 +97,45 @@ export function resolveQuality(graphics = {}) {
   // The detail hint follows the heaviest visual settings rather than the preset label, so 'custom' works.
   const detail = graphics.preset in DETAIL ? DETAIL[graphics.preset] : [0.25, 0.5, 0.8, 1][Math.round((shadows + reflections + lights) / 3)];
   const cuts = presetName === 'ultraLow' ? ULTRA_LOW : null;
+  const mem = graphics.lowMemory === true ? LOW_MEMORY : null;
+  const scale = clampNum(pick('resolutionScale'), 0.5, 1, base.resolutionScale);
+  const shadow = { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3][drawDistance] * (cuts ? ULTRA_LOW.reach : 1) };
+  if (mem) {
+    shadow.size = Math.min(shadow.size, mem.shadowSize);
+    shadow.cascades = Math.min(shadow.cascades, mem.cascades);
+    if (shadow.cascades > 0 && shadow.size < 512) shadow.cascades = 0;   // a 256-pixel cascade map is not a shadow
+  }
+  // A reflection pass that keeps a full-size mirror of the frame is the largest single thing in the frame
+  // after the G-buffer, so in a small-memory budget only the room probe survives, and at a quarter of its size.
+  let refl = REFLECTIONS[reflections];
+  if (mem && (refl.planar > 0 || refl.probe > 0 || refl.steps > 0)) {
+    refl = { ...refl, steps: 0, scale: 0, resolve: 0, refine: 0, planar: 0, roomPlanar: 0, probe: 0,
+      roomProbe: Math.min(refl.roomProbe, mem.probe), roomProbeFine: 1 };
+  }
+  const lightSet = cuts ? { maxLights: cuts.maxLights, sizeNear: cuts.sizeNear, sizeFar: 0, perCell: cuts.perCell }
+    : { ...LIGHTS[lights] };
+  if (mem && !cuts) {
+    lightSet.maxLights = Math.min(lightSet.maxLights, mem.lights);
+    lightSet.sizeNear = Math.min(lightSet.sizeNear, mem.sizeNear);
+    lightSet.sizeFar = 0;
+    lightSet.perCell = Math.min(lightSet.perCell, mem.perCell);
+  }
   return {
-    resolutionScale: clampNum(pick('resolutionScale'), 0.5, 1, base.resolutionScale),
+    // Whether the device is short of memory travels with the quality, because everything that has to
+    // decide an allocation decides it from here (the world's streaming rings read the setting itself).
+    lowMemory: mem !== null,
+    resolutionScale: mem ? Math.min(scale, mem.scale) : scale,
     dynamicResolution: graphics.dynamicResolution !== false,
     maxPixelRatio: clampNum(pick('maxPixelRatio'), 1, 2, base.maxPixelRatio),
     frameTarget: graphics.frameCap === 30 ? 1000 / 30 : 1000 / 60,          // ms, target of dynamic resolution
     levels: { shadows, ao, reflections, bloom, motionBlur, depthOfField, lights, particles, drawDistance },
-    shadows: { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3][drawDistance] * (cuts ? ULTRA_LOW.reach : 1) },
-    ao: AO[ao], reflections: REFLECTIONS[reflections], bloom: BLOOM[bloom], motionBlur: MOTION_BLUR[motionBlur], depthOfField: DEPTH_OF_FIELD[depthOfField],
-    lights: cuts ? { maxLights: cuts.maxLights, sizeNear: cuts.sizeNear, sizeFar: 0, perCell: cuts.perCell } : LIGHTS[lights],
-    particles: cuts ? { max: cuts.particles } : PARTICLES[particles],
-    antialiasing,
+    shadows: shadow,
+    ao: AO[ao], reflections: refl, bloom: BLOOM[bloom],
+    motionBlur: mem ? MOTION_BLUR[0] : MOTION_BLUR[motionBlur],
+    depthOfField: DEPTH_OF_FIELD[depthOfField],
+    lights: lightSet,
+    particles: cuts ? { max: cuts.particles } : mem ? { max: Math.min(PARTICLES[particles].max, mem.particles) } : PARTICLES[particles],
+    antialiasing: mem && antialiasing === 'taa' ? 'fxaa' : antialiasing,
     volumetrics: clampInt(pick('volumetrics'), 0, 1, base.volumetrics) === 1,
     filmGrain: pick('filmGrain') !== false && pick('filmGrain') !== 0,
     chromaticAberration: pick('chromaticAberration') === true || pick('chromaticAberration') === 1,

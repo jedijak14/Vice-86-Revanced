@@ -25,6 +25,11 @@ export const OFFENCES = Object.freeze({
   collision: 2,
   'patrol car struck': 4,
   'officer threatened': 4,
+  // On foot the street has a man in it rather than a car, and what a man does with a gun or a shop's till
+  // is judged by the same ledger: heard, witnessed, and written down.
+  'shots fired': 3,
+  'person shot': 5,
+  'shop held up': 4,
   'peds scattered': 1,
   'wrong way': 2,
   'kerb riding': 1,

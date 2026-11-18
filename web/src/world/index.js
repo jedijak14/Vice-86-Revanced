@@ -144,10 +144,17 @@ export async function createWorld({ renderer, physics, settings, onProgress = ()
     showFinest(tile);
   }
 
+  // A device held to a small-memory budget keeps fewer tiles around: the rings are the whole of what the
+  // city costs in mesh and texture memory, and an area falls with the square of its radius, so 0.72 of the
+  // reach is half the street for the same buildings at the same distance.
+  const memoryScale = () => (graphics().lowMemory ? 0.72 : 1);
+  const nearRadius = (d) => NEAR_RADIUS[d] * memoryScale();
+  const midRadius = (d) => MID_RADIUS[d] * memoryScale();
+
   /** Which level-of-detail rings a tile is in now: [near wanted, mid wanted], and whether it may be kept. */
   const ringOf = (distance) => {
     const d = level03(graphics().drawDistance, 2);
-    return { near: distance < NEAR_RADIUS[d], mid: distance < MID_RADIUS[d], keepNear: distance < NEAR_RADIUS[d] + NEAR_HYSTERESIS, keepMid: distance < MID_RADIUS[d] + MID_HYSTERESIS };
+    return { near: distance < nearRadius(d), mid: distance < midRadius(d), keepNear: distance < nearRadius(d) + NEAR_HYSTERESIS, keepMid: distance < midRadius(d) + MID_HYSTERESIS };
   };
 
   /** Recompute releases and the ordered list of tile levels to request. */
@@ -160,14 +167,14 @@ export async function createWorld({ renderer, physics, settings, onProgress = ()
       if (tile.levels[MID] && !ring.keepMid) release(tile, MID);
     }
     const list = []; let pending = 0, skyline = 0;
-    const d = level03(graphics().drawDistance, 2), reach = MID_RADIUS[d];
+    const d = level03(graphics().drawDistance, 2), reach = midRadius(d);
     for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
       const flags = content[slot(tx, tz)]; if (!flags) continue;
       const distance = rectDistance(tx, tz, camera.x, camera.z), tile = tiles.get(tx + ',' + tz);
       const missing = (level) => !tile || ((!tile.levels[level] || stale(tile.levels[level])) && !tile.failed[level]);
       const cx = (tx + 0.5) * tileSize - camera.x, cz = (tz + 0.5) * tileSize - camera.z, l = Math.hypot(cx, cz) || 1, ahead = (cx * camera.dirX + cz * camera.dirZ) / l;
       // Order: the near ring, then the skyline of the whole city, then the mid ring; nearer and ahead first.
-      if (distance < NEAR_RADIUS[d] && missing(NEAR)) { pending++; list.push({ tx, tz, level: NEAR, cost: distance - AHEAD_BONUS * ahead }); }
+      if (distance < nearRadius(d) && missing(NEAR)) { pending++; list.push({ tx, tz, level: NEAR, cost: distance - AHEAD_BONUS * ahead }); }
       if ((flags & SOLID) && missing(FAR)) { skyline++; list.push({ tx, tz, level: FAR, cost: 1000 + distance * 0.01 }); }
       if (distance < reach && missing(MID)) { pending++; list.push({ tx, tz, level: MID, cost: 2000 + distance - AHEAD_BONUS * ahead }); }
     }

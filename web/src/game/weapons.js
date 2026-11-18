@@ -77,6 +77,13 @@ export function createWeapon(deps = {}) {
   const crowd = deps.crowd || null;
   const rng = typeof deps.rng === 'function' ? deps.rng : Math.random;
   const dir = [0, 0, 0], origin = [0, 0, 0];
+  /**
+   * What is in the bag for each gun, whether it is in the hand or not. Drawing a pistol that is already
+   * carried cannot hand you a fresh magazine — that would make a holster a shop — so the counts live here
+   * and the hand is only ever a view of them.
+   */
+  const carry = new Map();
+  const stash = () => { if (gun.id) carry.set(gun.id, { magazine: gun.inMagazine, reserve: gun.reserve }); };
 
   const gun = {
     id: null,
@@ -95,13 +102,32 @@ export function createWeapon(deps = {}) {
     equip(id) {
       const spec = WEAPONS[id];
       if (!spec) return null;
+      const kept = carry.get(id);
       gun.id = id; gun.weapon = spec;
-      gun.inMagazine = spec.magazine; gun.reserve = spec.reserve;
+      gun.inMagazine = kept ? kept.magazine : spec.magazine;
+      gun.reserve = kept ? kept.reserve : spec.reserve;
+      if (!kept) carry.set(id, { magazine: spec.magazine, reserve: spec.reserve });
       gun.cooldown = 0; gun.reloading = 0; gun.heat = 0;
       return spec;
     },
-    /** Takes it away again (entering a car, going inside, being searched). */
-    stow() { gun.id = null; gun.weapon = null; gun.inMagazine = 0; gun.reserve = 0; gun.reloading = 0; },
+    /**
+     * Takes it away again (entering a car, going inside, being searched). The brass goes back in the bag
+     * with it: a gun you put down is the gun you pick up, not a fresh one.
+     */
+    stow() {
+      stash();
+      gun.id = null; gun.weapon = null; gun.inMagazine = 0; gun.reserve = 0; gun.reloading = 0;
+    },
+    /** What is in the bag for a gun you are not holding, for a shop that wants to sell you more of it. */
+    carried(id) { return carry.get(id) || null; },
+    /** The shop's way of handing over brass: it goes in the bag, held or not. */
+    issue(rounds, id = gun.id) {
+      const kept = carry.get(id) || { magazine: 0, reserve: 0 };
+      kept.reserve += rounds | 0;
+      carry.set(id, kept);
+      if (id === gun.id) gun.reserve = kept.reserve;
+      return kept.reserve;
+    },
     get armed() { return !!gun.weapon; },
     get empty() { return gun.armed && gun.inMagazine === 0; },
     get ready() { return gun.armed && gun.inMagazine > 0 && gun.cooldown <= 0 && gun.reloading <= 0; },
@@ -127,6 +153,7 @@ export function createWeapon(deps = {}) {
           const want = gun.weapon.magazine - gun.inMagazine, take = Math.min(want, gun.reserve);
           gun.inMagazine += take; gun.reserve -= take;
           if (gun.inMagazine > 0) gun.needReload = false;
+          stash();
         }
       }
     },
@@ -154,7 +181,7 @@ export function createWeapon(deps = {}) {
       if (gun.inMagazine <= 0) { gun.needReload = true; return null; }
       gun.inMagazine--;
       gun.cooldown = 1 / spec.rate;
-      void 0;
+      stash();
       // The pattern opens by a third per shot and closes again at about two seconds' worth of standing: a
       // burst that never ends sprays, and a shooter who waits gets his first shot's accuracy back. The
       // decay belongs to `advance`, which this call has already run — charging it twice would leave a

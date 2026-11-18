@@ -213,8 +213,15 @@ export const RULES = Object.freeze([
 export function readEnvironment() {
   const nav = globalThis.navigator || {};
   const scr = globalThis.screen || {};
+  const ua = typeof nav.userAgent === 'string' ? nav.userAgent : '';
+  const platform = typeof nav.platform === 'string' ? nav.platform : '';
+  const touchPoints = typeof nav.maxTouchPoints === 'number' ? nav.maxTouchPoints : 0;
   return {
     deviceMemory: typeof nav.deviceMemory === 'number' ? nav.deviceMemory : undefined,
+    // Safari implements no `deviceMemory` at all, so on an iPad the number is missing rather than large.
+    // iPadOS also reports itself as a Macintosh, which is why the touch points are the tell (the same test
+    // every iOS browser check uses): a Mac with a touchscreen is not a thing Safari can pretend to be.
+    ios: /iPad|iPhone|iPod/.test(ua) || (platform === 'MacIntel' && touchPoints > 1),
     hardwareConcurrency: typeof nav.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : undefined,
     screenWidth: typeof scr.width === 'number' ? scr.width : undefined,
     screenHeight: typeof scr.height === 'number' ? scr.height : undefined,
@@ -376,7 +383,21 @@ export function describeGraphics(caps, env = readEnvironment()) {
   else if (env.hardwareConcurrency <= 4) { ceiling = lower(ceiling, 'high'); reasons.push('Four processor cores limit Auto to High.'); }
 
   preset = lower(preset, ceiling);
-  return { preset, ceiling, family, score, renderer, label, reasons };
+  // Memory of its own, apart from how fast the machine is. A 3 GB iPad shares those bytes with the OS, the
+  // tab and the picture, and what fills them first is the big buffers: the sign atlas, the render targets,
+  // the tiles of city held around the car. Those are what `lowMemory` shrinks (render/quality.js and
+  // world/index.js), and shrinking them costs a little sharpness rather than a lot of the street.
+  // An iPad or iPhone that reports no memory is treated as small, because the ones that need this most and
+  // the ones that do not differ by 8 GB and the browser will not say which is which; a desktop that reports
+  // nothing is left alone, since a desktop with 16 GB and a hidden number is the common case.
+  const lowMemory = (env.deviceMemory !== undefined ? env.deviceMemory <= 4 : env.ios === true)
+    || family === 'software';
+  if (lowMemory) {
+    reasons.push(env.deviceMemory !== undefined
+      ? `${env.deviceMemory} GB of memory: the city is held in a small-memory budget.`
+      : 'An iOS device that will not say its memory: held in a small-memory budget.');
+  }
+  return { preset, ceiling, family, score, renderer, label, reasons, lowMemory };
 }
 
 /** Preset by score alone, ignoring the screen. */

@@ -12,6 +12,7 @@
 // that `game/shops.js` hands to the renderer, which is also what makes the room testable in node.
 
 import { MeshBuilder } from '../../core/mesh.js';
+import { m4fromYawPos } from '../../core/math.js';
 import { FAMILY, SOLID, GROUND, CHANNEL, LIGHT_STRIDE, GLOW_STRIDE } from '../../core/ids.js';
 
 /** Metres. A corner store: deep enough for three aisles, low enough that the ceiling reads as a shop. */
@@ -36,21 +37,90 @@ const FLOOR_TILE = 0.75;
  *
  * @param {{sign?: string, hours?: string, palette?: object}} [options]  the name painted on the fascia
  */
+/** Where the room stands: `{yaw, at}` turns the set to the lot it belongs to and lifts it to the ground. */
+const NO_PLACE = { yaw: 0, at: [0, 0, 0] };
+
 export function buildShopSet(options = {}) {
   const palette = { ...PALETTES[options.palette] || PALETTES.grocery, ...(options.palette2 || {}) };
-  const floor = buildFloor(palette);
-  const shell = buildShell(palette);
-  const fittings = buildFittings(palette);
-  const sign = buildSign(options.sign || 'OPEN', palette);
-  const lights = lightList(palette);
+  // A room that faces a different way has to be *built* facing that way: the renderer's static instances are
+  // only ever translated, so a set standing in the world carries its own turning in its vertices. The lights,
+  // the glows and the anchors are moved by the same numbers, which is what keeps a lamp on its fitting.
+  const yaw = Number.isFinite(options.yaw) ? options.yaw : 0;
+  const at = Array.isArray(options.at) && options.at.length === 3 ? options.at : NO_PLACE.at;
+  const moved = yaw !== 0 || at[0] !== 0 || at[1] !== 0 || at[2] !== 0;
+  const m = moved ? m4fromYawPos(new Float32Array(16), yaw, at[0], at[1], at[2]) : null;
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const put = (p) => [at[0] + p[0] * c + p[2] * s, at[1] + p[1], at[2] - p[0] * s + p[2] * c];
+  const floor = buildFloor(palette, m);
+  const shell = buildShell(palette, m);
+  const fittings = buildFittings(palette, m);
+  const sign = buildSign(options.sign || 'OPEN', palette, m);
+  // Placed first, so the glow of a tube is derived from the tube where it now stands.
+  const lights = lightList(palette).map((l) => ({
+    ...l,
+    a: l.a ? put([l.a[0], l.a[1], l.a[2]]) : undefined,
+    b: l.b ? put([l.b[0], l.b[1], l.b[2]]) : undefined,
+    position: l.position ? put([l.position[0], l.position[1], l.position[2]]) : undefined,
+  }));
   const glows = glowList(lights, palette);
+  const anchors = {
+    door: put([DOOR.x, 0, DOOR.z]),
+    entry: put([ENTRY.x, 0, ENTRY.z]),
+    counter: put([COUNTER.x, COUNTER.top, COUNTER.z]),
+    till: put([TILL.x, TILL.y, TILL.z]),
+    clerk: put([CLERK.x, 0, CLERK.z]),
+    back: put([CLERK.flee.x, 0, CLERK.flee.z]),
+    // The room as the renderer's interior frame wants it: the box, the ceiling that lights it, where a
+    // reflection is captured from, and the ambient the walls hold. Mirrors world/garage/index.js.
+    room: {
+      min: [-(ROOM.width / 2 + ROOM.wall), 0, -(ROOM.depth / 2 + ROOM.wall)],
+      max: [ROOM.width / 2 + ROOM.wall, ROOM.height, ROOM.depth / 2 + ROOM.wall],
+    },
+    lightBox: {
+      centre: put([0, ROOM.height - 0.22, 0]),
+      u: [(ROOM.width / 2 - 0.7) * c, 0, -(ROOM.width / 2 - 0.7) * s],
+      v: [(ROOM.depth / 2 - 1) * s, 0, (ROOM.depth / 2 - 1) * c],
+      normal: [0, -1, 0],
+      // A shop's ceiling is one long diffuser over a flat room: the same order as the garage's panel
+      // (world/garage/plan.js RADIANCE.diffuser), because a supermarket is bright for the same reason a
+      // workshop is — the light is meant to fall on the goods, not to be looked at.
+      radiance: [4.2, 4.05, 3.7],
+    },
+    probe: put([0, 1.1, 0]),
+    look: { ambient: [0.05, 0.048, 0.052], haze: 0.05 },
+  };
+  // The box a man is kept inside, and the frame the renderer reads it in: an oriented room's AABB is the
+  // eight corners of the room, placed, and a room turned 45° is a bigger box than a room facing north.
+  let bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  if (moved) {
+    for (const p of corners(anchors.room.min, anchors.room.max)) {
+      for (let k = 0; k < 3; k++) {
+        if (p[k] < bounds[k]) bounds[k] = p[k];
+        if (p[k] > bounds[k + 3]) bounds[k + 3] = p[k];
+      }
+    }
+  } else {
+    bounds = anchors.room.min.concat(anchors.room.max);
+  }
   return {
     meshes: { floor, shell, fittings, sign },
-    lights, glows,
-    anchors: { door: [DOOR.x, 0, DOOR.z], entry: [ENTRY.x, 0, ENTRY.z], counter: [COUNTER.x, COUNTER.top, COUNTER.z], till: [TILL.x, TILL.y, TILL.z], clerk: [CLERK.x, 0, CLERK.z], back: [CLERK.flee.x, 0, CLERK.flee.z] },
-    bounds: [-ROOM.width / 2 - ROOM.wall, 0, -ROOM.depth / 2 - ROOM.wall, ROOM.width / 2 + ROOM.wall, ROOM.height, ROOM.depth / 2 + ROOM.wall],
-    floorY: 0,
+    lights, glows, anchors, bounds,
+    yaw, at: [at[0], at[1], at[2]],
+    floorY: at[1],
+    // The room's own frame, for whoever has to convert a world position back into it: `game/shops.js`
+    // measures a man against the till in the room's numbers, not the street's.
+    toRoom: (x, z, out = [0, 0]) => {
+      const dx = x - at[0], dz = z - at[2];
+      out[0] = dx * c - dz * s; out[1] = dx * s + dz * c; return out;
+    },
   };
+}
+
+/** The eight corners of an AABB, for turning a box into the box that holds it once it has been rotated. */
+function corners(min, max) {
+  const out = [];
+  for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) out.push([x, y, z]);
+  return out;
 }
 
 /** The three shopfronts the street offers, in their own colours. */
@@ -62,7 +132,7 @@ export const PALETTES = Object.freeze({
 
 // ---------------------------------------------------------------------------------------- the pieces
 
-function buildFloor(p) {
+function buildFloor(p, m) {
   const b = new MeshBuilder(1200);
   const w = ROOM.width / 2, d = ROOM.depth / 2;
   // Tiles, drawn as a grid of quads two shades apart: a floor with no pattern in it is a box's floor.
@@ -75,16 +145,17 @@ function buildFloor(p) {
       const z0 = -d + (r * 2 * d) / rows, z1 = -d + ((r + 1) * 2 * d) / rows;
       void step; void even;
       const tone = 0.9 + 0.1 * (((r * 7 + c * 3) % 5) / 4);
-      b.family(FAMILY.GROUND).material(GROUND.TILE, 0, 0, 0)
+      b.family(FAMILY.GROUND).material(GROUND.PAVERS, 0, 0, 0)
         .color(p.floor[0] * tone, p.floor[1] * tone, p.floor[2] * tone)
         .occlusion(x0 < 0 ? 0.9 : 1);
       quad(b, x0, 0.001, z0, x1, 0.001, z0, x1, 0.001, z1, x0, 0.001, z1, [0, 1, 0]);
     }
   }
+  if (m) b.transform(m);
   return b.finish();
 }
 
-function buildShell(p) {
+function buildShell(p, m) {
   const b = new MeshBuilder(900);
   const w = ROOM.width / 2, d = ROOM.depth / 2, h = ROOM.height, t = ROOM.wall;
   const wallMat = () => b.family(FAMILY.SOLID).material(SOLID.PAINT, 0, 0, 0).color(p.wall[0], p.wall[1], p.wall[2]);
@@ -114,6 +185,8 @@ function buildShell(p) {
     quad(b, x0, 0.1, z, x1, 2.45, z, x1, 2.45, z, x0, 0.1, z, [0, 0, 1]);
     quad(b, x0, 0.1, z, x0, 2.45, z, x1, 2.45, z, x1, 0.1, z, [0, 0, -1]);
   }
+  b.family(FAMILY.SOLID).material(SOLID.EMISSIVE, 0, 0, 0).color(1.6, 1.55, 1.4);
+  quad(b, -(w + t), 0.1, z + 0.16, w + t, 2.45, z + 0.16, w + t, 2.45, z + 0.16, -(w + t), 0.1, z + 0.16, [0, 0, -1]);
   wallMat();
   quad(b, -(w + t), 2.45, z, w + t, h, z, w + t, h, z, -(w + t), 2.45, z, [0, 0, -1]);
   quad(b, -(w + t), 2.45, z, w + t, 2.45, z, w + t, 2.45, z, -(w + t), 2.45, z, [0, 0, 1]);
@@ -131,10 +204,11 @@ function buildShell(p) {
     quad(b, cx - strip / 2, h - 0.125, -ROOM.depth * 0.31, cx + strip / 2, h - 0.125, -ROOM.depth * 0.31,
       cx + strip / 2, h - 0.125, ROOM.depth * 0.31, cx - strip / 2, h - 0.125, ROOM.depth * 0.31, [0, -1, 0]);
   }
+  if (m) b.transform(m);
   return b.finish();
 }
 
-function buildFittings(p) {
+function buildFittings(p, m) {
   const b = new MeshBuilder(2600);
   const w = ROOM.width / 2, d = ROOM.depth / 2;
   // Gondolas: a base, four boards, and rows of goods. The goods are what sells the room — a shop with
@@ -160,10 +234,11 @@ function buildFittings(p) {
   // A rack of the things you buy standing at the till, and a stack of crates by the door.
   shelfRun(b, COUNTER.x - 1.6, COUNTER.z + 1.5, 0, 1.1, p);
   for (let i = 0; i < 3; i++) box(b, -1.9 + (i % 2) * 0.7, 0.02 + Math.floor(i / 2) * 0.44, d - 1.6, 0.6, 0.42, 0.5, [0.62, 0.48, 0.3]);
+  if (m) b.transform(m);
   return b.finish();
 }
 
-function buildSign(text, p) {
+function buildSign(text, p, m) {
   const b = new MeshBuilder(200);
   const z = ROOM.depth / 2 + ROOM.wall + 0.06, y = ROOM.height - 0.62;
   box(b, 0, y, z, ROOM.width * 0.86, 0.52, 0.14, [0.12, 0.12, 0.13]);
@@ -179,6 +254,7 @@ function buildSign(text, p) {
       tube(b, x0 + g * cell + seg[0] * 0.16, y + seg[1] * 0.22, z + 0.1, seg[2], seg[3], 0.035);
     }
   }
+  if (m) b.transform(m);
   return b.finish();
 }
 

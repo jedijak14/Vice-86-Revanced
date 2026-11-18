@@ -16,7 +16,7 @@
 import { clamp, smoothstep, lerp } from '../core/math.js';
 
 export const HELD_ACTIONS = ['throttle', 'brake', 'steer', 'handbrake', 'boost', 'lookBack', 'horn'];
-export const PRESS_ACTIONS = ['camera', 'headlamps', 'recover', 'time', 'weather', 'race', 'pause'];
+export const PRESS_ACTIONS = ['camera', 'headlamps', 'recover', 'time', 'weather', 'race', 'pause', 'foot', 'weapon', 'shop'];
 
 /** Keyboard layout by physical key (`KeyboardEvent.code`), so it is the same on every layout. */
 export const KEY_BINDINGS = Object.freeze({
@@ -34,6 +34,10 @@ export const KEY_BINDINGS = Object.freeze({
   KeyT: 'time',
   KeyY: 'weather',
   KeyV: 'race',               // take the street race on offer here (game/races.js)
+  KeyF: 'foot',               // step out of the car, or get back in (game/foot.js)
+  KeyB: 'weapon',             // draw the pistol, or stow it (game/weapons.js)
+  KeyE: 'shop',               // the door: into a shopfront, or back out of the room (game/shops.js)
+
   Escape: 'pause', KeyP: 'pause',
 });
 
@@ -50,6 +54,9 @@ export const PAD_BUTTONS = Object.freeze({
   12: 'time', // d-pad up
   13: 'weather', // d-pad down
   14: 'headlamps', // d-pad left
+  5: 'foot', // right bumper: out of the car, back into it
+  15: 'shop', // right stick in: a door, in and out (game/shops.js)
+
 });
 const PAD_THROTTLE = 7; // right trigger
 const PAD_BRAKE = 6; // left trigger

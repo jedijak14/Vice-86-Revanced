@@ -107,7 +107,7 @@ export function createFoot(deps = {}) {
     attach(cast0, renderer, factory = null) {
       if (foot.person || !renderer) return foot.person;
       let person = null;
-      if (crowd && crowd.takePerson) person = crowd.takePerson({ character: foot.characterIndex, seed: foot.seed });
+      if (crowd && crowd.takePerson) person = crowd.takePerson({ character: foot.characterIndex, wardrobe: foot.wardrobe, id: foot.seed });
       if (!person && factory) person = factory(renderer, cast0, foot.characterIndex, { height, wardrobe: foot.wardrobe });
       if (!person) return null;
       foot.person = person;

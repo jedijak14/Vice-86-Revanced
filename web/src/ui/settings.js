@@ -76,6 +76,9 @@ const GRAPHICS_FIELDS = [
     'Internal rendering resolution as a share of the display resolution. The largest single lever on frame rate.'),
   toggle('dynamicResolution', 'Dynamic resolution', true,
     'Lowers the internal resolution for a moment when a frame runs long, then restores it.'),
+  choice('memoryMode', 'Memory use', [
+    { value: 'auto', label: 'Auto' }, { value: 'low', label: 'Low' }, { value: 'full', label: 'Full' },
+  ], 'auto', 'How much of the machine\u2019s memory the city is allowed to hold: the picture, the sign texture, the loaded streets and every crowd in them. Low shrinks all of them so a phone or tablet with 3 GB shared between everything can hold the city at once; Auto reads the device and chooses. Nothing about the road is lost, only how sharply it is remembered.'),
   choice('maxPixelRatio', 'Max pixel ratio', [
     { value: 1, label: '1.0' }, { value: 1.25, label: '1.25' }, { value: 1.5, label: '1.5' }, { value: 2, label: '2.0' },
   ], 1, 'Upper limit on device pixels per CSS pixel. Above 1.0 only matters on high-density screens.'),
@@ -354,6 +357,30 @@ export function applyPreset(settings, name, autoPreset = FALLBACK_PRESET) {
     graphics.preset = 'custom';
   }
   return settings;
+}
+
+/**
+ * Whether the game should hold itself to a small-memory budget. 'low' and 'full' are the player's own
+ * answer; 'auto' is the device's, from ui/detect.js, which has to guess on iOS because Safari reports no
+ * memory at all (see describeGraphics).
+ */
+export function memoryWanted(mode, detected) {
+  return mode === 'low' ? true : mode === 'full' ? false : detected === true;
+}
+
+/**
+ * Writes the derived memory flag where the renderer, the world and the atlas look for it. Called at boot
+ * with the device's answer, and again on every settings change, so switching the panel's choice takes
+ * effect without a reload.
+ * @param {object} settings
+ * @param {boolean} [detected]  describeGraphics' answer; left as it was when not given
+ * @returns {boolean} the flag now in force
+ */
+export function applyMemoryMode(settings, detected) {
+  const g = settings.graphics;
+  if (detected !== undefined) g.memoryDetected = detected === true;
+  g.lowMemory = memoryWanted(g.memoryMode, g.memoryDetected === true);
+  return g.lowMemory;
 }
 
 /** Fills the concrete graphics fields for the Auto preset; does nothing unless the preset is 'auto'. */

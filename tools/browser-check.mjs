@@ -43,6 +43,8 @@ const quality = opt('quality', 'low');
 const seed = Number(opt('seed', 7)) | 0;
 const race = Math.max(0, Math.min(1, Number(opt('race', 1)) | 0));
 const drive = Math.max(0, Math.min(1, Number(opt('drive', 0)) | 0));
+/** Walk on the pavement at the end of the check (--foot=1): out of the car, a run, a magazine, back in. */
+const footOn = Math.max(0, Math.min(1, Number(opt('foot', 0)) | 0)) === 1;
 const executablePath = opt('chromium', process.env.CHROMIUM_PATH || '/tmp/chromium');
 const shot = opt('shot', '/tmp/vice-police.png');
 /** Raw extra query parameters, for flags the harness has no option of its own for: --query=webgl2=force */
@@ -98,13 +100,14 @@ const read = () => page.evaluate(() => {
     car: window.__vice.car(),
     police: p,
     hud: hud ? { text: hud.textContent.trim(), on: hud.classList.contains('is-on'), pips: stars } : null,
-    hudLine: ['mission', 'race', 'crew'].reduce((out, n) => {
+    engineLine: (() => { const n = document.querySelector('.wordmark__engine'); return n ? n.textContent.trim() : null; })(),
+    stats: { fps: s.fps, traffic: s.traffic, parked: s.parked, tiles: s.tilesLoaded, pending: s.tilesPending, street: s.streetSeconds,
+      onFoot: s.onFoot, cash: s.cash, gun: s.gun, foot: s.foot },
+    hudLine: ['mission', 'race', 'crew', 'purse', 'foot'].reduce((out, n) => {
       const e = document.querySelector(`.hud__${n}-text`);
       if (e && e.textContent.trim()) out[n] = e.textContent.trim();
       return out;
     }, {}),
-    engineLine: (() => { const n = document.querySelector('.wordmark__engine'); return n ? n.textContent.trim() : null; })(),
-    stats: { fps: s.fps, traffic: s.traffic, parked: s.parked, tiles: s.tilesLoaded, pending: s.tilesPending, street: s.streetSeconds },
     gpu: s.renderer || s.gpu || null,
     // The street's own population and the record, both read from the game rather than the DOM, plus
     // what the HUD actually rendered: a row that never lights up is a feature that does not exist.
@@ -197,12 +200,134 @@ while (Date.now() < deadline && reached) {
 }
 await page.evaluate(() => window.__vice.input(null));
 
+// ---- the man on the pavement (--foot=1): out of the car, a run down it, a magazine emptied and reloaded.
+// The same page, the same camera, no restart: if walking is going to break the drive, it breaks here, and
+// if the walker never moves this is where it shows — a unit test has no world in it and no GLB on disk.
+if (footOn && reached) {
+  const at = () => page.evaluate(() => window.__vice.stats());
+  const spot = (s) => (s.foot && s.foot.pos ? [s.foot.pos[0], s.foot.pos[2]] : null);
+  // A man steps out of a stopped car, so bring the car to a stop first — and on a machine this slow that
+  // takes longer than it looks: the street is given a fifth of a second per wall second here.
+  await page.evaluate(() => window.__vice.input({ brake: 1 }));
+  for (let i = 0; i < 14; i++) {
+    const s = await page.evaluate(() => window.__vice.car());
+    if (s && Math.abs(s.speed) < 0.4) break;
+    await page.waitForTimeout(1_500);
+  }
+  await page.evaluate(() => window.__vice.input(null));
+  // Then wait for the street to be showing: a scene change is a fade, and a fade swallows a key on purpose.
+  for (let i = 0; i < 30; i++) {
+    const s = await at();
+    if (s.transition === 'none') break;
+    await page.waitForTimeout(1_500);
+  }
+  await page.waitForTimeout(1_000);
+  let out = await at();
+  // Press until the game answers. A press during a fade is dropped on purpose (the key belongs to the
+  // picture the player is watching, not to the one arriving), and on a software renderer a fade takes a
+  // minute of wall time, so "press once and look" is a test of timing rather than of walking.
+  for (let i = 0; i < 24 && !out.onFoot; i++) {
+    await page.evaluate(() => window.__vice.press('foot'));
+    await page.waitForTimeout(2_500);
+    out = await at();
+  }
+  const pageErrors = await page.evaluate(() => window.__vice.errors.map((e) => String(e).slice(0, 200)));
+  log('foot', `press answered: onFoot ${JSON.stringify(out.onFoot)}, transition ${out.transition}, fade ${out.frameFade}, car ${JSON.stringify((await page.evaluate(() => window.__vice.car())).speed)}, foot ${JSON.stringify(out.foot)}, page errors ${pageErrors.length}`);
+  if (pageErrors.length) log('foot', 'errors: ' + pageErrors.slice(-3).join(' || '));
+  if (!out.onFoot) errors.push('foot: ' + ('the man never left the car (stats.onFoot is false after a press of "foot")'));
+  else {
+    const before = spot(out);
+    await page.evaluate(() => window.__vice.input({ throttle: 1, boost: 1 }));
+    for (let i = 0; i < 10; i++) await page.waitForTimeout(1_500);
+    const walked = await at();
+    const after = spot(walked);
+    const metres = before && after ? Math.hypot(after[0] - before[0], after[1] - before[1]) : 0;
+    const f = walked.foot || {};
+    log('foot', `ran ${metres.toFixed(1)} m · state ${f.state} · stamina ${Math.round((f.stamina || 0) * 100)}% · body ${f.body ? 'drawn' : 'none'} · near ${f.near === null || f.near === undefined ? 'nothing' : `${f.near} m`}`);
+    if (!(metres > 2)) errors.push('foot: ' + (`the walker covered ${metres.toFixed(2)} m of ground in fifteen seconds of running: the feet do not move the man`));
+    // The trigger, held: the gun's own cooldown is what sets the pace, until the magazine is gone.
+    await page.evaluate(() => window.__vice.input({ handbrake: 1 }));
+    for (let i = 0; i < 6; i++) await page.waitForTimeout(1_500);
+    const firing = await at();
+    const g0 = firing.gun || {};
+    const wantedAfter = await page.evaluate(() => (window.__vice.wanted ? window.__vice.wanted() : null));
+    log('gun', `${g0.shots} shots · ${g0.magazine} left in the magazine · ${g0.hits} struck · state ${g0.state} · stars ${wantedAfter && wantedAfter.stars}`);
+    if (!(g0.shots > 0)) errors.push('gun: ' + ('the trigger was held on the pavement and the gun never fired (gun.shots stayed 0)'));
+    if (g0.shots > 0 && !(wantedAfter && wantedAfter.points > 0)) errors.push('gun: ' + ('shots were fired and the wanted record never heard about it'));
+    // Reload, then back into the car: the handover has to work in both directions.
+    await page.evaluate(() => window.__vice.input(null));
+    await page.evaluate(() => window.__vice.press('recover'));
+    for (let i = 0; i < 4; i++) await page.waitForTimeout(1_500);
+    const reloaded = await at();
+    log('gun', `after R: ${reloaded.gun.magazine}/${reloaded.gun.reserve} · state ${reloaded.gun.state} · the pocket says ${reloaded.cash}`);
+    if (reloaded.gun.magazine <= g0.magazine) errors.push('gun: ' + (`R did not move a magazine: it went from ${g0.magazine} to ${reloaded.gun.magazine}`));
+    // A door: the room has to go up on the same frame the man arrives in it, so this is where a mistake in
+    // the interior plumbing shows — a bad mesh, a light list the renderer refused, a room the camera is lost in.
+    const door = await page.evaluate(() => window.__vice.shop());
+    if (!door || !door.count) warnings.push('there is no shop on the island to walk into (shops.count was 0)');
+    else if (!door.onFoot) warnings.push('foot: the man was back in the car before the door could be tried');
+    else {
+      await page.evaluate(([x, z]) => window.__vice.walkTo(x, z), [door.x, door.z]);
+      await page.waitForTimeout(1_500);
+      await page.evaluate(() => window.__vice.press('shop'));
+      let gone = null;
+      for (let i = 0; i < 24; i++) {
+        gone = await page.evaluate(() => window.__vice.shop());
+        if (gone && gone.inside) break;
+        await page.waitForTimeout(1_500);
+      }
+      const seen = await at();
+      log('shop', `${gone.name} (${gone.kind}, ${gone.action}) · inside ${JSON.stringify(gone.inside)} · room ${gone.room} · offer "${gone.label}" · cash ${seen.cash}`);
+      if (!gone || !gone.inside) errors.push('shop: ' + (`the door was pressed at ${door.name} and he never got inside (inside ${gone && gone.inside}, transition ${seen.transition}, fade ${seen.frameFade})`));
+      else {
+        const drawn = await page.evaluate(() => window.__vice.crowdRender ? window.__vice.crowdRender() : null);
+        const stats = await page.evaluate(() => window.__vice.stats());
+        log('shop', `inside: frame lights ${stats.frameLights === undefined ? 'n/a' : stats.frameLights}, tiles ${stats.tilesLoaded}, street clock ${stats.street.toFixed(2)} s`);
+        await page.evaluate(() => window.__vice.press('shop'));   // and back out the same way he came in
+        for (let i = 0; i < 16; i++) {
+          const s = await page.evaluate(() => window.__vice.shop());
+          if (s && !s.inside) break;
+          await page.waitForTimeout(1_500);
+        }
+        const back = await page.evaluate(() => window.__vice.shop());
+        if (back && back.inside) errors.push('shop: ' + 'the door let him in and would not let him out');
+        else log('shop', 'back on the pavement');
+      }
+      void drawn;
+    }
+    const lines = await page.evaluate(() => {
+      const grab = (n) => { const e = document.querySelector(`.hud__${n}-text`); return e ? e.textContent.trim() : ''; };
+      return { purse: grab('purse'), foot: grab('foot') };
+    });
+    log('hud', `purse row ${JSON.stringify(lines.purse)} · foot row ${JSON.stringify(lines.foot)}`);
+    if (!lines.foot) errors.push('hud: ' + ('the foot row never lit up while the man was on the pavement'));
+    await page.evaluate(() => window.__vice.press('foot'));
+    await page.waitForTimeout(2_500);
+    const backIn = await at();
+    if (backIn.onFoot) errors.push('foot: ' + ('he never got back in the car'));
+    else log('foot', 'back in the car, and the camera is the chase rig again');
+  }
+}
+
 const final = reached ? await read() : null;
 if (final) {
   log('final', JSON.stringify({ phase: final.phase, ready: final.ready, engine: final.engine, engineLine: final.engineLine, police: final.police && { ...final.police, units: final.police.units.length }, crowd: final.crowd, wanted: final.wanted, hudStars: final.hudStars, hudLine: final.hudLine, hudRow: final.hudRow, race: final.race, hudStarTotal: final.hudStarTotal, hudRows: final.hudRows, hud: final.hud, stats: final.stats }));
   // The title carries the game's mark and nothing else: no renderer credit printed over it. The
   // probe reads the node that used to hold it, so the check fails if it ever comes back.
   if (final.engineLine !== null) bad('wordmark', `the engine is printed on the title again: ${JSON.stringify(final.engineLine)}`);
+  const cr = await page.evaluate(() => (window.__vice.crowdRender ? window.__vice.crowdRender() : null));
+  if (final.crowd && final.crowd.cast === true && final.crowd.articulated > 0) {
+    if (!cr || cr.rendered <= 0) bad('models', `the cast loaded and ${final.crowd.articulated} body/bodies were promoted, but none reached the camera`);
+    else if (!(cr.triangles > 0)) bad('models', `${cr.rendered} people were drawn with no triangles at all (crowdRender ${JSON.stringify(cr)})`);
+    else log('render', `${cr.rendered} of ${final.crowd.peds} people drawn, ${cr.triangles} triangles, ${final.crowd.bodies} bodies in hand`);
+  }
+  // The people are a download now: five rigged bodies and a clip library. A page that never got them has
+  // an empty pavement and no error to show for it, so this is a hard failure, not a shrug.
+  if (final.crowd && final.phase === 'driving') {
+    if (final.crowd.cast !== true) bad('models', `the cast never loaded (crowd.cast=${JSON.stringify(final.crowd.cast)}): the pavements are empty`);
+    else if (final.crowd.articulated === 0 && final.crowd.peds > 0) bad('models', `${final.crowd.peds} people on the street and not one of them has a body`);
+    else if (final.crowd.peds > 0 && final.crowd.bodies < final.crowd.articulated) bad('models', 'a body count below the articulated count means people are being drawn without a person');
+  }
   // The street has to be *inhabited*: a crowd of zero at traffic 2 is a bug, not a quiet evening.
   if (final.crowd && traffic > 0 && final.crowd.peds === 0 && final.phase === 'driving') warnings.push(`nobody on the pavements (${JSON.stringify(final.crowd)})`);
   // Limbs are the visible part of the rig: with a moving car and medium quality somebody has to have them.
@@ -229,7 +354,9 @@ if (final) {
   if (final.hudStarTotal !== 5 && final.hudStarTotal !== 0) warnings.push(`the HUD built ${final.hudStarTotal} star slots`);
   log('peak heat', peak, '| officers out at some point:', officers);
   try {
-    await page.screenshot({ path: shot, timeout: 180_000, animations: 'disabled' });
+    // 'allow', not 'disabled': the game loop repaints forever, and waiting for animations to settle while
+    // a software renderer needs most of a minute per frame only ever ends in a timeout.
+    await page.screenshot({ path: shot, timeout: 600_000, animations: 'allow', caret: 'hide' });
     log('screenshot', shot);
   } catch (error) {
     warnings.push(`screenshot: ${error.message}`);

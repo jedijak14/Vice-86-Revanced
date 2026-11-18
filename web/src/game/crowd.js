@@ -43,7 +43,24 @@ export const SPAWN_NEAR = 58;
 /** Seconds a person at a corner keeps waving before they give up on the traffic. */
 export const HAIL_PATIENCE = 26;
 /** The odds, per six seconds of waiting, that somebody decides they need a cab. */
-export const HAIL_ODDS = 0.16;
+/** How many of them want a cab, per think, by the hour. */
+export const HAIL_ODDS_DAY = 0.16, HAIL_ODDS_NIGHT = 0.4;
+/**
+ * How full the pavement is, by the hour. A 1986 beach town shuts early and starts late, and the small hours
+ * belong to whoever is walking home from a bar; nobody is ever entirely absent, because an empty pavement
+ * reads as a bug rather than as three in the morning.
+ */
+export function crowdByHour(hour) {
+  const h = (((hour | 0) % 24) + 24) % 24;
+  if (h >= 1 && h < 6) return 0.34;
+  if (h >= 6 && h < 9) return 0.55;
+  if (h >= 9 && h < 18) return 1;
+  if (h >= 18 && h < 22) return 1.15;
+  return 0.8;
+}
+/** Whether the hour is one for standing at the kerb with your arm out. */
+export const isNightHour = (hour) => { const h = (((hour | 0) % 24) + 24) % 24; return h >= 22 || h < 7; };
+const HAIL_ODDS = HAIL_ODDS_DAY;
 /** The carriageway edge is behind you once the plan's distance is above this. */
 const KERB_A = 0.05;
 /** How far outboard to look for a pavement before giving up on that side of that lane, metres. */
@@ -140,7 +157,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   let density = 1, cap = 99, serial = 0;
   const people = [], spare = [];
   const scratch = [0, 0, 0];
-  const car = { x: 0, z: 0, y: 0, yaw: 0, speed: 0 };
+  const car = { x: 0, z: 0, y: 0, yaw: 0, speed: 0, hour: 12 };
   let mark = -1, failed = false, qualityTier = quality;
   const idlePeople = [];                       // built bodies, parked: see takePerson and handPersonBack
 
@@ -257,7 +274,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       p.wardrobe = rng.int(0, WARDROBE.length - 1);
       p.walk = 1.05 + hash01(p.id, 3) * 0.7;
       p.phase = hash01(p.id, 5);
-      p.state = 'walk'; p.hold = 0; p.threat = 0; p.hailing = 0; p.look = 0;
+      p.state = 'walk'; p.hold = 0; p.threat = 0; p.hailing = 0; p.look = 0; p.down = 0;
       return true;
     }
     return false;
@@ -399,8 +416,10 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     step(dt, at, driving = true) {
       if (!(dt > 0) || !live || !driving || !crowd.enabled) return;
       car.x = at.x; car.z = at.z; car.y = at.y || land; car.yaw = at.yaw; car.speed = at.speed || 0;
+      car.hour = Number.isFinite(at.hour) ? at.hour : 12;
       clock += dt;
-      const want = CROWD_BY_DENSITY[density].peds;
+      // The hour says how many people the street keeps; the density says how many it bothers to animate.
+      const want = Math.round(CROWD_BY_DENSITY[density].peds * crowdByHour(car.hour));
       // People arrive as the crowd thins. The rate is per second of game time rather than per frame:
       // on a slow machine two a frame is two every quarter of a second, and a street that takes half a
       // minute to fill up is a street that reads as empty at every speed the game can actually run at.
@@ -452,9 +471,51 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       crowd.drawPassenger();
     },
 
+    /**
+     * A gunshot, a scream, a car mounted on the kerb: everybody near it flinches. The crowd is not run
+     * away from a firing — a person who vanishes through a wall is worse than one who stands there with
+     * their arms up — so fright is a hold and a raised threat, which is what `think` and `roleFor` already
+     * turn into a body. Returns how many were near enough to see it.
+     */
+    frighten(x, z, radius = 26, strength = 1) {
+      let touched = 0;
+      for (const p of people) {
+        if (p.down > 0) continue;
+        const d = Math.hypot(p.x - x, p.z - z);
+        if (!(d <= radius)) continue;
+        const k = strength * (1 - d / radius);
+        p.threat = Math.max(p.threat, 0.4 + 0.6 * k);
+        p.hold = Math.max(p.hold, 1.1 + 3.4 * k);
+        p.state = 'startle';
+        touched++;
+      }
+      return touched;
+    },
+
+    /**
+     * Somebody was struck: they go down where they stand and stay down for `seconds`, and the ones near
+     * enough to have seen it are frightened by it. A struck person is not a physics body, so nothing pushes
+     * them over — the fall is an animation and a state, which is what the crowd is made of.
+     */
+    strike(p, { seconds = 26 } = {}) {
+      if (!p || p.down > 0) return false;
+      p.down = seconds;
+      p.state = 'down'; p.hold = 0; p.hailing = 0; p.threat = 0;
+      if (p.mark) p.mark.visible = false;
+      crowd.frighten(p.x, p.z, 30, 1);
+      return true;
+    },
+
     /** Where they are going, whether to wait, and what the car is doing about them. */
     think(p, dt, d) {
       p.clock += dt;
+      // A body on the pavement stays there. Getting up is not a courtesy: it is what a patrol arrives to
+      // find, and a man shot once who is on his feet four seconds later is a bug wearing a wound.
+      if (p.down > 0) {
+        p.down -= dt;
+        if (p.down <= 0) { p.state = 'hold'; p.hold = 3.5 + hash01(p.id, 21) * 4; }
+        return;
+      }
       p.think -= dt;
       if (p.think <= 0) {
         p.think = THINK_SECONDS;
@@ -470,7 +531,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
         // hurried past by anybody, tries their luck every so often — which is what the mark over their
         // head is for, and the only reason a driver has to look at a pavement.
         if (!p.hailing && p.threat < 0.12 && (p.state === 'walk' || p.state === 'hold')
-            && hash01(p.id, Math.floor(p.clock / 6)) < HAIL_ODDS) {
+            && hash01(p.id, Math.floor(p.clock / 6)) < (isNightHour(car.hour) ? HAIL_ODDS_NIGHT : HAIL_ODDS_DAY)) {
           p.state = 'hail'; p.hold = 1e3; p.hailing = 1; p.hailClock = 0;
           p.patience = HAIL_PATIENCE * (0.55 + 0.9 * hash01(p.id, 13));
         }
@@ -507,6 +568,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
      * where the pavement says they should rather than where the clock says.
      */
     roleFor(p) {
+      if (p.down > 0) return 'down';
       if (p.state === 'walk') return p.walk > 1.55 ? 'run' : 'walk';
       if (p.state === 'startle') return 'startle';
       return null;
@@ -606,10 +668,10 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     },
 
     snapshot() {
-      let hailing = 0, startled = 0;
-      for (const p of people) { if (p.hailing) hailing++; if (p.threat > 0.3) startled++; }
+      let hailing = 0, startled = 0, down = 0;
+      for (const p of people) { if (p.hailing) hailing++; if (p.threat > 0.3) startled++; if (p.down > 0) down++; }
       return {
-        peds: people.length, articulated: crowd.articulated, cast: !!cast, bodies: crowd.bodies(), density, hailing, startled,
+        peds: people.length, articulated: crowd.articulated, cast: !!cast, bodies: crowd.bodies(), density, hailing, startled, down,
         passenger: !!crowd.passenger,
         // What the crowd has to work with: the streets it was offered, and the ones near the car now.
         streets: nearby.length, walkable: walkable.length, misses: crowd.misses,
