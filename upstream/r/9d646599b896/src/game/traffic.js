@@ -1,0 +1,630 @@
+// Traffic around the player: which vehicles exist, where they are drawn and what the physics
+// world knows about them. How they drive is in drivers.js; this file gives each driver a body.
+//
+// Moving vehicles are created on road lanes in a ring around the player, out of the camera's
+// view, and removed again once they are far behind or far away. Each one is a traffic box in
+// the physics world that follows its driver. When the player (or another wreck) really hits a
+// box, physics takes it over; the driver is taken off the road, the vehicle slides to rest
+// with its hazard lights on, and the drivers behind see it as an obstacle. A vehicle that was
+// only nudged and still stands along a lane sets off again.
+//
+// Parked vehicles come from tile data and are the same kind of box without a driver.
+
+import { clamp, smoothstep, makeRng, hash01, angleDelta, damp, m4transformPoint } from '../core/math.js';
+import { CHANNEL } from '../core/ids.js';
+import { trafficSpec } from '../physics/index.js';
+import { TrafficSim } from './drivers.js';
+import { comfortSpeed } from './lanes.js';
+import { createVehicleKit, VehicleView } from './vehicleView.js';
+import { writeVehicleLamps, GLOW_ROUND, HEADLAMP_SUN_ELEVATION, HEADLAMP_RAIN } from './lamps.js';
+
+/** Moving vehicles and share of the parked vehicles kept, by the traffic setting 0..3. */
+export const MOVING_BY_DENSITY = Object.freeze([0, 12, 24, 40]);
+export const PARKED_BY_DENSITY = Object.freeze([0.3, 0.5, 0.75, 1]);
+
+// Spawning and retiring, metres from the player.
+const SPAWN_NEAR = 170, SPAWN_FAR = 330;
+const SPAWN_VISIBLE_BEYOND = 250; // in view, a vehicle may only appear further away than this
+const SPAWN_SNAP = 45; // a ring point is moved to the nearest lane within this distance
+const SPAWN_ATTEMPTS = 3; // per simulation step
+const POPULATE_NEAR = 38, POPULATE_FAR = 300;
+const RETIRE_FAR = 390;
+const RETIRE_BEHIND = 190;
+const RETIRE_STUCK_SECONDS = 100; // a vehicle that has stood this long is removed when unseen
+const VIEW_COS = 0.5; // cosine of the half-angle that counts as "in view" (a little over the widest field of view)
+
+// Wrecks.
+const REST_SPEED = 0.3; // m/s
+const REJOIN_AFTER = 2.5; // s at rest before a nudged vehicle tries to set off again
+const REJOIN_LATERAL = 2.6; // m from a lane centre
+const REJOIN_ANGLE = 0.45; // rad off the lane direction
+const REJOIN_HALF_LIFE = 0.45; // s: the vehicle eases from where it stood onto the lane
+const WRECK_SECONDS = 25; // an unseen wreck is cleared away after this long at rest
+
+// Drawing.
+// Lamps. One beam lights ninety metres of road, so wherever the way a vehicle's lamps are drawn
+// changes, it changes as a fade, over distance or over time: whatever is switched shows as the
+// street flashing.
+// No lamps beyond LAMP_RANGE. It lies inside RETIRE_FAR by more than a camera stands from the car,
+// so a vehicle's lamps have gone out before the vehicle is removed.
+const LAMP_RANGE = 370;
+const LAMP_FADE_FROM = 0.75 * LAMP_RANGE; // the glows dim from here to nothing at LAMP_RANGE
+const LAMP_ARRIVE_SECONDS = 1; // a vehicle put on the road in view brings its lamps up over this long
+const BEAM_RANGE = 130; // beyond this headlamps are glows only
+// A beam dims from BEAM_FADE_FROM to nothing at BEAM_RANGE. The band is as long as it is because of
+// oncoming traffic: closing at 45 m/s a vehicle crosses it in a second and a half, which keeps the
+// change from one frame to the next to a few hundredths of the beam.
+const BEAM_FADE_FROM = 0.5 * BEAM_RANGE;
+// The close-up set of lamps (lamps.js: a beam per headlamp, tail wash, plate lamps) goes to the
+// nearest vehicles, over a band of distance in which both sets are drawn, each with its share.
+// A vehicle that has one of the places counts as a little nearer than it is, so that vehicles at
+// about the same distance do not keep trading places; one that loses its place fades out of it.
+const NEAR_MAX = 3;
+const NEAR_FULL_RANGE = 36, NEAR_RANGE = 46;
+const NEAR_KEEP = 0.85;
+const NEAR_FADE_SECONDS = 0.5;
+const HEADLAMP_WARM_SECONDS = 0.3; // a filament coming up to brightness, or dying away
+const OCCLUDER_RANGE = 36; // contact shadows under vehicles this close
+const ROOF_SIGN_GLOW = 9, ROOF_SIGN_SIZE = 0.55;
+const AUDIBLE = 6; // vehicles reported to the audio engine
+// Headlamp habits (design/brief/lighting-and-mood.md section 10). Drivers do not all reach
+// for the switch at the same moment, and one in twenty-five forgets until it is nearly dark.
+const HEADLAMP_SPREAD = 0.02; // rad: how much later than the first the last attentive driver is
+const FORGETFUL_SHARE = 1 / 25;
+const FORGETFUL_SUN_ELEVATION = -0.07; // rad, four degrees below the horizon
+// Patrol cars mostly cruise with a dark roof; one in three is answering a call and runs its light bar.
+const ON_CALL_SHARE = 1 / 3;
+const LIGHT_BAR_CODE = 4; // added to the indicator code of the VEHICLE shader while the bar runs
+
+const DRIVING = 0, WRECK = 1, PARKED = 2;
+
+const approach = (value, target, step) => (value < target ? Math.min(target, value + step) : Math.max(target, value - step));
+
+const isRoadLane = (lane) => !lane.junction && lane.next.length > 0;
+const anyRoadLane = (lane) => !lane.junction;
+
+/** One vehicle with a body: moving, wrecked or parked. */
+class TrafficVehicle {
+  constructor(id) {
+    this.id = id;
+    this.type = 0;
+    this.state = PARKED;
+    this.kit = null;
+    this.view = null;
+    this.box = null;
+    this.driver = null;
+    this.shape = null;
+    this.lamp = { head: 0, brake: 0, reverse: 0, indicator: 0 };
+    /** Sun elevation in radians below which this driver has the headlamps on. */
+    this.dusk = HEADLAMP_SUN_ELEVATION;
+    /** Share 0..1 of the close-up set of lamps this vehicle is drawn with, and whether it holds one of the places. */
+    this.near = 0;
+    this.nearHeld = false;
+    /** Share 0..1 of their strength the lamps are drawn with while the vehicle arrives. */
+    this.shown = 1;
+    /** False until the first frame has set the lamps: a vehicle arrives with them as they should be. */
+    this.lit = false;
+    this.spin = 0;
+    this.steer = 0;
+    this.lastYaw = 0;
+    this.rest = 0;
+    this.retry = 0;
+    // Offset from the driver's pose that is still being eased out after a rejoin.
+    this.ox = 0; this.oz = 0; this.oyaw = 0;
+    this.distance = 0;
+    this.level = -2;
+    this.loose = false; // a parked vehicle that has been pushed
+    this.lightBar = false; // a patrol car on a call
+  }
+}
+
+/**
+ * @param {{renderer: object, physics: object, graph: import('./lanes.js').LaneGraph|null,
+ *          models: object[], seed?: number}} deps
+ *   models: the traffic models (10.1, 15.3); their order is the parked type index
+ */
+export function createTraffic({ renderer, physics, graph, models, seed = 1 }) {
+  const sim = graph ? new TrafficSim(graph, { seed }) : null;
+  // Without a lane graph or without vehicle types there is nothing to put on the road; the
+  // simulation still runs, because its clock times the signals.
+  const drivable = sim !== null && models.length > 0;
+  const rng = makeRng(seed ^ 0x7ac1);
+  const kits = models.map((model) => createVehicleKit(renderer, model));
+  const shapes = models.map((model) => {
+    const he = model.collider.halfExtents, c = model.collider.centre;
+    return { frontLength: he[2] + c[2], rearLength: he[2] - c[2], halfWidth: he[0], wheelbase: model.dims.wheelbase, centreZ: c[2], halfLength: he[2] };
+  });
+  const masses = models.map((model) => trafficSpec(model.kind, model).mass);
+  // How often each type appears on the road (buses and trucks are rare).
+  const spawnWeight = (index) => (models[index].spawnWeight !== undefined ? models[index].spawnWeight : 1);
+  const typeIndices = models.map((_, i) => i);
+  const viewPools = models.map(() => []);
+
+  /** @type {TrafficVehicle[]} */
+  const moving = [];
+  /** @type {TrafficVehicle[]} */
+  const parked = [];
+  /** @type {TrafficVehicle[]} */
+  const loose = [];
+  const tiles = new Map(); // key -> { data: Float32Array, vehicles: (TrafficVehicle|null)[] }
+  const audible = [];
+  const audiblePool = [];
+  for (let i = 0; i < AUDIBLE; i++) audiblePool.push({ position: [0, 0, 0], velocity: [0, 0, 0], kind: 'sedan', throttle: 0, id: 0, distance: 0 });
+  const focus = { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, halfLength: 2.1, halfWidth: 1, centreZ: 0, eye: [0, 0, 0], fx: 0, fy: 0, fz: 1 };
+  const pos = [0, 0, 0];
+  const centre = [0, 0, 0];
+  let density = 2;
+  // The holders of the close-up lamps this frame, nearest first, and the distance each was ranked by.
+  const nearest = new Array(NEAR_MAX).fill(null), nearKey = new Float64Array(NEAR_MAX);
+  let nearCount = 0;
+  let nextId = 1;
+
+  function inView(x, y, z) {
+    const dx = x - focus.eye[0], dy = y - focus.eye[1], dz = z - focus.eye[2];
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return d < 1 || (dx * focus.fx + dy * focus.fy + dz * focus.fz) / d > VIEW_COS;
+  }
+
+  function acquireView(type) {
+    const view = viewPools[type].pop() || new VehicleView(renderer, kits[type], { castShadow: true });
+    view.setVisible(true);
+    view.markTeleported();
+    return view;
+  }
+
+  function releaseView(type, view) {
+    view.setVisible(false);
+    view.update(0, null);
+    viewPools[type].push(view);
+  }
+
+  function makeVehicle(type, state, x, y, z, yaw, paint, dirt) {
+    const v = new TrafficVehicle(nextId++);
+    v.type = type;
+    v.state = state;
+    v.kit = kits[type];
+    v.shape = shapes[type];
+    v.view = acquireView(type);
+    v.view.setPaint(paint, dirt);
+    v.view.setLamps(0, 0, 0, 0);
+    pos[0] = x; pos[1] = y; pos[2] = z;
+    v.box = physics.createKinematicBox({ model: models[type], mass: masses[type], userData: v, pos, yaw });
+    v.lastYaw = yaw;
+    v.view.setBodyFromYaw(pos, yaw);
+    return v;
+  }
+
+  function destroyVehicle(v) {
+    if (v.driver) { sim.remove(v.driver); v.driver = null; }
+    physics.removeKinematicBox(v.box);
+    releaseView(v.type, v.view);
+    v.box = null;
+    v.view = null;
+  }
+
+  function removeAt(list, index) {
+    list[index] = list[list.length - 1];
+    list.pop();
+  }
+
+  // ------------------------------------------------------------------ moving vehicles
+
+  function spawnOn(lane, s) {
+    const type = rng.weighted(typeIndices, spawnWeight);
+    const shape = shapes[type];
+    const speed = Math.min(comfortSpeed(lane, s), lane.speedLimit) * 0.85;
+    if (!sim.canPlace(lane, s, shape.frontLength, shape.rearLength, speed)) return false;
+    const driver = sim.add(lane, s, shape, speed);
+    const paints = models[type].paints;
+    const v = makeVehicle(type, DRIVING, driver.x, driver.y, driver.z, driver.yaw, paints[rng.int(0, paints.length - 1)], rng.range(0, 0.3));
+    v.driver = driver;
+    v.dusk = hash01(driver.seed, 11) < FORGETFUL_SHARE ? FORGETFUL_SUN_ELEVATION : HEADLAMP_SUN_ELEVATION - HEADLAMP_SPREAD * hash01(driver.seed, 9);
+    v.lightBar = models[type].kind === 'police' && hash01(driver.seed, 13) < ON_CALL_SHARE;
+    driver.userData = v;
+    moving.push(v);
+    return true;
+  }
+
+  /** One attempt to put a vehicle on a lane near the ring point at `angle`, `radius`. */
+  function trySpawn(angle, radius, near, hiddenWithin) {
+    const hit = graph.nearest(focus.x + Math.sin(angle) * radius, focus.z + Math.cos(angle) * radius, SPAWN_SNAP, isRoadLane);
+    if (!hit) return false;
+    const distance = Math.hypot(hit.x - focus.x, hit.z - focus.z);
+    if (distance < near) return false;
+    if (distance < hiddenWithin && inView(hit.x, hit.y + 0.7, hit.z)) return false;
+    return spawnOn(hit.lane, hit.s);
+  }
+
+  function spawn() {
+    const want = MOVING_BY_DENSITY[density];
+    if (!drivable || moving.length >= want) return;
+    // Mostly ahead of where the player is going, so that the road in front is never empty.
+    const speed = Math.hypot(focus.vx, focus.vz);
+    const heading = speed > 3 ? Math.atan2(focus.vx, focus.vz) : focus.yaw;
+    for (let i = 0; i < SPAWN_ATTEMPTS && moving.length < want; i++) {
+      const angle = rng.chance(0.3) ? rng.range(-Math.PI, Math.PI) : heading + rng.gauss() * 0.9;
+      // Far ahead a new vehicle may be in view, and at night its lamps are all of it that shows.
+      if (trySpawn(angle, rng.range(SPAWN_NEAR, SPAWN_FAR), SPAWN_NEAR, SPAWN_VISIBLE_BEYOND)) moving[moving.length - 1].shown = 0;
+    }
+  }
+
+  function retire() {
+    const hx = Math.sin(focus.yaw), hz = Math.cos(focus.yaw);
+    for (let i = moving.length - 1; i >= 0; i--) {
+      const v = moving[i];
+      const dx = v.box.pos[0] - focus.x, dz = v.box.pos[2] - focus.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      let gone = d > RETIRE_FAR;
+      if (!gone && (d > RETIRE_BEHIND || v.state === WRECK || v.driver.finished || v.driver.idle > RETIRE_STUCK_SECONDS)) {
+        const seen = inView(v.box.pos[0], v.box.pos[1] + 0.7, v.box.pos[2]);
+        if (v.state === WRECK) gone = !seen && d > 60 && v.rest > WRECK_SECONDS;
+        else if (v.driver.finished || v.driver.idle > RETIRE_STUCK_SECONDS) gone = !seen && d > 60;
+        else gone = !seen && dx * hx + dz * hz < 0;
+      }
+      if (gone) {
+        destroyVehicle(v);
+        removeAt(moving, i);
+      }
+    }
+  }
+
+  /** A hit vehicle that has come to rest along a lane goes back to its driver. */
+  function tryRejoin(v) {
+    const box = v.box;
+    const hit = graph.nearest(box.pos[0], box.pos[2], REJOIN_LATERAL, anyRoadLane);
+    if (!hit || !isRoadLane(hit.lane) || Math.abs(angleDelta(hit.yaw, box.yaw)) > REJOIN_ANGLE) return false;
+    if (!sim.canPlace(hit.lane, hit.s, v.shape.frontLength, v.shape.rearLength, 0)) return false;
+    const driver = sim.add(hit.lane, hit.s, v.shape, 0);
+    v.ox = box.pos[0] - driver.x; v.oz = box.pos[2] - driver.z; v.oyaw = angleDelta(driver.yaw, box.yaw);
+    v.driver = driver;
+    driver.userData = v;
+    v.state = DRIVING;
+    v.rest = 0;
+    box.resume();
+    return true;
+  }
+
+  function stepMoving(dt) {
+    for (let i = 0; i < moving.length; i++) {
+      const v = moving[i], box = v.box;
+      if (v.state === DRIVING) {
+        if (box.pushed) {
+          // Physics has taken the vehicle: the driver gives up the road.
+          sim.remove(v.driver);
+          v.driver = null;
+          v.state = WRECK;
+          v.rest = 0;
+          v.retry = 0;
+          continue;
+        }
+        const d = v.driver;
+        if (v.ox !== 0 || v.oz !== 0 || v.oyaw !== 0) {
+          v.ox = damp(v.ox, 0, REJOIN_HALF_LIFE, dt); v.oz = damp(v.oz, 0, REJOIN_HALF_LIFE, dt); v.oyaw = damp(v.oyaw, 0, REJOIN_HALF_LIFE, dt);
+          if (Math.abs(v.ox) + Math.abs(v.oz) < 0.01 && Math.abs(v.oyaw) < 0.002) { v.ox = 0; v.oz = 0; v.oyaw = 0; }
+        }
+        pos[0] = d.x + v.ox; pos[1] = d.y; pos[2] = d.z + v.oz;
+        box.setPose(pos, d.yaw + v.oyaw);
+        // Front wheels follow the curvature of the path; all wheels roll with the speed.
+        const travelled = d.v * dt;
+        if (travelled > 0.02) v.steer = damp(v.steer, clamp(Math.atan(v.shape.wheelbase * angleDelta(v.lastYaw, d.yaw) / travelled), -0.6, 0.6), 0.08, dt);
+        v.lastYaw = d.yaw;
+      } else {
+        const speed = Math.sqrt(box.vel[0] * box.vel[0] + box.vel[2] * box.vel[2]);
+        v.rest = speed < REST_SPEED ? v.rest + dt : 0;
+        v.retry -= dt;
+        if (v.rest > REJOIN_AFTER && v.retry <= 0) {
+          v.retry = 1;
+          tryRejoin(v);
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ parked vehicles
+
+  /**
+   * A parked vehicle's fixed rank in 0..1 and its dirt come from where it stands, not from its
+   * slot in the tile data: a tile rebuilt at another planting density lists its cars in another
+   * order, and the cars the player sees must be the same ones before and after.
+   */
+  const PARKED_FLOATS = 6;
+  const parkedHash = (data, o, salt) => hash01(Math.round(data[o] * 8), Math.round(data[o + 2] * 8), salt);
+
+  function parkFromTile(tile, index) {
+    const data = tile.data, o = index * PARKED_FLOATS;
+    const type = clamp(data[o + 4] | 0, 0, models.length - 1);
+    const paints = models[type].paints;
+    const v = makeVehicle(type, PARKED, data[o], data[o + 1], data[o + 2], data[o + 3], paints[(data[o + 5] | 0) % paints.length], 0.35 * parkedHash(data, o, 7));
+    parked.push(v);
+    return v;
+  }
+
+  function removeParked(v) {
+    const i = parked.indexOf(v);
+    if (i >= 0) removeAt(parked, i);
+    const j = loose.indexOf(v);
+    if (j >= 0) removeAt(loose, j);
+    destroyVehicle(v);
+  }
+
+  /** Brings a tile's parked vehicles in line with the density setting. */
+  function reconcileTile(tile) {
+    const share = PARKED_BY_DENSITY[density];
+    const count = tile.vehicles.length;
+    for (let i = 0; i < count; i++) {
+      // The same vehicles stay at every setting: each has a fixed rank between 0 and 1.
+      const wanted = parkedHash(tile.data, i * PARKED_FLOATS, 3) < share;
+      const v = tile.vehicles[i];
+      if (wanted && !v) tile.vehicles[i] = parkFromTile(tile, i);
+      else if (!wanted && v && !v.loose) { removeParked(v); tile.vehicles[i] = null; }
+    }
+  }
+
+  /** Same car: same spot, same type, same colour (the tile builder places a car to the millimetre). */
+  function sameParked(a, i, b, j) {
+    const p = i * PARKED_FLOATS, q = j * PARKED_FLOATS;
+    return Math.abs(a[p] - b[q]) < 0.01 && Math.abs(a[p + 2] - b[q + 2]) < 0.01 && (a[p + 4] | 0) === (b[q + 4] | 0) && (a[p + 5] | 0) === (b[q + 5] | 0);
+  }
+
+  /**
+   * The tile has been rebuilt (another planting density): its vehicles move to the slot their
+   * car has in the new data, so a car that is still listed stays the same object, unmoved and
+   * undrawn-again, whether it is standing where it was put or has been pushed loose. Only a car
+   * that the new data no longer lists goes.
+   */
+  function replaceTile(tile, data) {
+    const old = tile.vehicles, count = Math.floor(data.length / PARKED_FLOATS);
+    const vehicles = new Array(count).fill(null);
+    for (let i = 0; i < old.length; i++) {
+      const v = old[i];
+      if (!v) continue;
+      let j = 0;
+      while (j < count && (vehicles[j] !== null || !sameParked(tile.data, i, data, j))) j++;
+      if (j < count) vehicles[j] = v;
+      else removeParked(v);
+    }
+    tile.data = data;
+    tile.vehicles = vehicles;
+    reconcileTile(tile);
+  }
+
+  // ------------------------------------------------------------------ public
+
+  const traffic = {
+    sim,
+    /** Number of moving vehicles (wrecks included). */
+    get count() { return moving.length; },
+    get parkedCount() { return parked.length; },
+    /** The vehicles nearest to the listener, for the audio engine. Refreshed by update(). */
+    audible,
+
+    /** Traffic setting 0..3. */
+    setDensity(level) {
+      const next = clamp(Math.round(level), 0, 3);
+      if (next === density) return;
+      density = next;
+      for (const tile of tiles.values()) reconcileTile(tile);
+      // Fewer wanted than exist: the ones furthest from the player go first.
+      const want = MOVING_BY_DENSITY[density];
+      while (moving.length > want) {
+        let far = 0;
+        for (let i = 1; i < moving.length; i++) if (moving[i].distance > moving[far].distance) far = i;
+        destroyVehicle(moving[far]);
+        removeAt(moving, far);
+      }
+    },
+
+    /**
+     * A near tile has arrived: `tile.parked` holds n * 6 values (15.2). A tile that is already
+     * here is being replaced (rebuilt at another planting density): its cars are kept in place.
+     */
+    addTile(tile) {
+      if (!tile || models.length === 0) return;
+      const data = tile.parked && tile.parked.length >= PARKED_FLOATS ? tile.parked : null;
+      const entry = tiles.get(tile.key);
+      if (!data) { traffic.removeTile(tile.key); return; }
+      if (entry) { replaceTile(entry, data); return; }
+      const fresh = { data, vehicles: new Array(Math.floor(data.length / PARKED_FLOATS)).fill(null) };
+      tiles.set(tile.key, fresh);
+      reconcileTile(fresh);
+    },
+
+    removeTile(key) {
+      const entry = tiles.get(key);
+      if (!entry) return;
+      for (const v of entry.vehicles) if (v) removeParked(v);
+      tiles.delete(key);
+    },
+
+    /**
+     * Where the player and the camera are; decides spawning, retiring and what the drivers
+     * must avoid.
+     * @param {object} player  from createPlayer
+     * @param {{position: number[], forward: number[]}} camera
+     */
+    setFocus(player, camera) {
+      const p = player.vehicle.pos, vel = player.vehicle.vel;
+      focus.x = p[0]; focus.y = p[1]; focus.z = p[2];
+      focus.vx = vel[0]; focus.vz = vel[2];
+      focus.yaw = player.vehicle.yaw;
+      focus.halfLength = player.kit.halfExtents[2]; focus.halfWidth = player.kit.halfExtents[0]; focus.centreZ = player.kit.colliderCentre[2];
+      focus.eye[0] = camera.position[0]; focus.eye[1] = camera.position[1]; focus.eye[2] = camera.position[2];
+      focus.fx = camera.forward[0]; focus.fy = camera.forward[1]; focus.fz = camera.forward[2];
+    },
+
+    /**
+     * Advances the drivers and tells physics where every vehicle should be at the end of the
+     * coming physics steps. Call before `physics.advance`, only when at least one step runs.
+     * @param {number} dt  simulated time of those steps, seconds
+     */
+    step(dt) {
+      if (!sim) return;
+      sim.clearObstacles();
+      const sin = Math.sin(focus.yaw), cos = Math.cos(focus.yaw);
+      sim.obstacle(focus.x + sin * focus.centreZ, focus.z + cos * focus.centreZ, focus.yaw, focus.halfLength, focus.halfWidth, focus.vx, focus.vz);
+      for (let i = 0; i < moving.length; i++) {
+        const v = moving[i];
+        if (v.state === WRECK) wreckObstacle(v);
+      }
+      for (let i = 0; i < loose.length; i++) wreckObstacle(loose[i]);
+      sim.step(dt);
+      stepMoving(dt);
+      retire();
+      spawn();
+    },
+
+    /** Fills the streets around the player at once (start of a drive, after a teleport). */
+    populate() {
+      if (!drivable) return;
+      const want = MOVING_BY_DENSITY[density];
+      for (let i = 0; i < want * 14 && moving.length < want; i++) {
+        trySpawn(rng.range(-Math.PI, Math.PI), rng.range(POPULATE_NEAR, POPULATE_FAR), POPULATE_NEAR, 0);
+      }
+    },
+
+    /** Removes every moving vehicle (the player was moved somewhere else). */
+    clear() {
+      for (const v of moving) destroyVehicle(v);
+      moving.length = 0;
+    },
+
+    /**
+     * After the physics step: poses of the drawn vehicles, lamp states, the audible list.
+     * @param {number} dt           frame time, seconds
+     * @param {number} sunElevation  radians above the horizon
+     * @param {number} rain          0..1
+     */
+    update(dt, sunElevation, rain) {
+      const eye = focus.eye;
+      audible.length = 0;
+      nearCount = 0;
+      for (let i = 0; i < moving.length; i++) {
+        const v = moving[i], box = v.box, lamp = v.lamp;
+        const p = box.renderPos;
+        v.distance = distanceTo(p, eye);
+        const night = sunElevation < v.dusk || rain > HEADLAMP_RAIN ? 1 : 0;
+        lamp.head = v.lit && dt > 0 ? approach(lamp.head, night, dt / HEADLAMP_WARM_SECONDS) : night;
+        if (lamp.head > 0) offerNear(v);
+        let speed = 0;
+        if (v.state === DRIVING) {
+          const d = v.driver;
+          speed = d.v;
+          lamp.brake = d.braking ? 1 : 0; lamp.indicator = d.indicator;
+        } else {
+          speed = Math.sqrt(box.vel[0] * box.vel[0] + box.vel[2] * box.vel[2]);
+          lamp.brake = 0; lamp.indicator = 3;
+        }
+        v.spin = (v.spin + speed * dt / v.kit.wheelRadius[0]) % (Math.PI * 2);
+        v.view.setLamps(lamp.head, lamp.brake, 0, lamp.indicator + (v.lightBar ? LIGHT_BAR_CODE : 0));
+        v.view.setBodyFromQuat(p, box.renderQuat);
+        v.view.update(v.distance, null, v.steer, v.spin);
+        noteAudible(v);
+      }
+      for (let i = 0; i < moving.length; i++) {
+        const v = moving[i];
+        v.nearHeld = false;
+        for (let k = 0; k < nearCount; k++) if (nearest[k] === v) v.nearHeld = true;
+        const share = v.nearHeld ? 1 - smoothstep(NEAR_FULL_RANGE, NEAR_RANGE, v.distance) : 0;
+        v.near = v.lit && dt > 0 ? approach(v.near, share, dt / NEAR_FADE_SECONDS) : share;
+        v.shown = Math.min(1, v.shown + dt / LAMP_ARRIVE_SECONDS);
+        v.lit = true;
+      }
+      for (let i = 0; i < parked.length; i++) {
+        const v = parked[i], box = v.box;
+        const p = box.renderPos;
+        v.distance = distanceTo(p, eye);
+        if (box.pushed && !v.loose) { v.loose = true; loose.push(v); }
+        // A parked vehicle only needs redrawing when it is moved or changes level of detail.
+        const levels = v.kit.levels;
+        let level = 0;
+        while (level < levels.length - 1 && v.distance >= levels[level].far) level++;
+        const moved = v.loose && (Math.abs(box.vel[0]) + Math.abs(box.vel[2]) > 0.01 || Math.abs(box.yawRate) > 0.01);
+        if (level === v.level && !moved) continue;
+        v.level = level;
+        v.view.setBodyFromQuat(p, box.renderQuat);
+        v.view.update(v.distance, null, 0, 0);
+      }
+    },
+
+    /** This frame's vehicle lights, glows and contact shadows. */
+    writeLamps(out, eye, time) {
+      for (let i = 0; i < moving.length; i++) {
+        const v = moving[i];
+        if (v.distance < LAMP_RANGE) {
+          const reach = v.shown * (1 - smoothstep(BEAM_FADE_FROM, BEAM_RANGE, v.distance));
+          const glare = v.shown * (1 - smoothstep(LAMP_FADE_FROM, LAMP_RANGE, v.distance));
+          writeVehicleLamps(out, v.kit.lamps, v.view.matrix, v.lamp, eye, time, reach, v.near, glare);
+          const sign = v.kit.model.anchors.roofSign, lit = ROOF_SIGN_GLOW * v.lamp.head * reach;
+          if (sign && lit > 0) {
+            m4transformPoint(centre, v.view.matrix, sign.pos);
+            out.glow(centre[0], centre[1], centre[2], ROOF_SIGN_SIZE, lit, lit * 0.72, lit * 0.2, CHANNEL.ALWAYS, GLOW_ROUND);
+          }
+        }
+        if (v.distance < OCCLUDER_RANGE) occlude(out, v);
+      }
+      for (let i = 0; i < parked.length; i++) if (parked[i].distance < OCCLUDER_RANGE) occlude(out, parked[i]);
+    },
+
+    dispose() {
+      traffic.clear();
+      for (const key of [...tiles.keys()]) traffic.removeTile(key);
+      for (const pool of viewPools) { for (const view of pool) view.dispose(); pool.length = 0; }
+      for (const kit of kits) kit.dispose();
+    },
+  };
+
+  function distanceTo(p, eye) {
+    const dx = p[0] - eye[0], dy = p[1] - eye[1], dz = p[2] - eye[2];
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  function wreckObstacle(v) {
+    const box = v.box, s = v.shape;
+    const sin = Math.sin(box.yaw), cos = Math.cos(box.yaw);
+    sim.obstacle(box.pos[0] + sin * s.centreZ, box.pos[2] + cos * s.centreZ, box.yaw, s.halfLength, s.halfWidth, box.vel[0], box.vel[2]);
+  }
+
+  function occlude(out, v) {
+    m4transformPoint(centre, v.view.matrix, v.kit.colliderCentre);
+    const he = v.kit.halfExtents;
+    out.occluder(centre[0], centre[1], centre[2], v.box.yaw, he[0], he[1], he[2]);
+  }
+
+  /** Keeps the NEAR_MAX nearest vehicles with their lamps on as the holders of the close-up set. */
+  function offerNear(v) {
+    if (v.distance >= NEAR_RANGE) return;
+    const key = v.nearHeld ? v.distance * NEAR_KEEP : v.distance;
+    let slot = nearCount;
+    if (slot === NEAR_MAX) {
+      if (key >= nearKey[slot - 1]) return;
+      slot--;
+    } else {
+      nearCount++;
+    }
+    while (slot > 0 && nearKey[slot - 1] > key) { nearest[slot] = nearest[slot - 1]; nearKey[slot] = nearKey[slot - 1]; slot--; }
+    nearest[slot] = v; nearKey[slot] = key;
+  }
+
+  /** Keeps the AUDIBLE nearest moving vehicles, nearest first. */
+  function noteAudible(v) {
+    let slot = audible.length;
+    if (slot === AUDIBLE) {
+      if (v.distance >= audible[slot - 1].distance) return;
+      slot--;
+    } else {
+      audible.push(audiblePool[slot]);
+    }
+    const entry = audible[slot];
+    while (slot > 0 && audible[slot - 1].distance > v.distance) { audible[slot] = audible[slot - 1]; slot--; }
+    audible[slot] = entry;
+    const p = v.box.renderPos, vel = v.box.vel;
+    entry.position[0] = p[0]; entry.position[1] = p[1]; entry.position[2] = p[2];
+    entry.velocity[0] = vel[0]; entry.velocity[1] = vel[1]; entry.velocity[2] = vel[2];
+    entry.kind = v.kit.model.kind;
+    entry.throttle = v.driver ? clamp(0.15 + v.driver.a / v.driver.accel, 0, 1) : 0;
+    entry.id = v.id;
+    entry.distance = v.distance;
+  }
+
+  return traffic;
+}
