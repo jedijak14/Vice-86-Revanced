@@ -62,6 +62,14 @@ const ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
   '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
   '--disable-gpu-sandbox', '--mute-audio', '--hide-scrollbars',
+  // A page the browser thinks nobody is looking at gets its animation frames throttled to a trickle, and a
+  // headless browser with no window manager is only too happy to decide that. These are the flags that make
+  // the tab behave as if somebody is watching it: without them this script measures a hidden page, at about
+  // two frames a minute, and reads that as the game being slow. It is not.
+  '--disable-backgrounding-occluded-windows',
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--disable-features=CalculateNativeWinOcclusion',
 ];
 
 const t0 = Date.now();
@@ -70,6 +78,8 @@ const log = (...a) => console.log(`+${((Date.now() - t0) / 1000).toFixed(1)}s`, 
 
 const browser = await chromium.launch({ executablePath, args: ARGS });
 const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
+// The other half of the same fight: ask to be the front tab, and say what the page believes about itself.
+await page.bringToFront();
 const errors = [], warnings = [], failedRequests = [], badResponses = [];
 let raceStarted = false;        // so a board with nobody on it can be complained about at the end
 let lastRaceBoard = null, raceSeenOnce = false;
@@ -141,6 +151,17 @@ if (reached && hourWanted) {
   }, hourWanted);
   log('time', `--time=${hourWanted}: ${moved && moved.hour !== null ? `the street is at ${moved.hour.toFixed(1)} h` : `the hour did not move (${JSON.stringify(moved)})`}`);
 }
+
+// Whether the page thinks it is visible, and how many frames it has actually been given: the first is the
+// excuse, the second is the fact. A run below a few frames a second is measuring the harness, not the game,
+// and everything judged after it (a walker who seems not to move, a room that seems never to light up) has to
+// be read with that in mind — so it is printed, and complained about, rather than silently believed.
+const selfSeen = await page.evaluate(() => ({
+  visibility: document.visibilityState, focused: document.hasFocus ? document.hasFocus() : null,
+}));
+const bootFrames = await page.evaluate(() => { const s = window.__vice.stats ? window.__vice.stats() : null; return s ? s.frames : 0; });
+log('page', `${selfSeen.visibility}${selfSeen.focused === false ? ' but unfocused' : ''}, ${bootFrames} frames in ${(wallSeconds || (Date.now() - t0) / 1000).toFixed(0)} s so far`);
+if (bootFrames < 60) warnings.push(`the page was given ${bootFrames} frames in ${((wallSeconds || (Date.now() - t0) / 1000) / 60).toFixed(1)} minutes — this run measures a starved tab, not the game`);
 
 let peak = 0, officers = 0, ordered = false, last = '';
 let raced = false, raceRead = false, driveStep = 0;
