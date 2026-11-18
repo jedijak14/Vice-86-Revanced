@@ -10,6 +10,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -45,11 +46,13 @@ def dependencies(path, body):
     # Ignore documentation examples; actual runtime paths are quoted literals.
     source = re.sub(r'/\*[\s\S]*?\*/|(?m:^\s*//[^\n]*)', '', source)
     result = set()
-    for match in REFERENCE.finditer(source):
-        resolved = urlsplit(urljoin(ORIGIN + path, match[2]))
+    # Some wasm-bindgen builds use a bare filename in new URL(..., import.meta.url).
+    url_files = re.findall(r'''new\s+URL\(\s*['"]([\w.-]+\.wasm)['"]\s*,\s*import\.meta\.url''', source)
+    for specifier in [*(m[2] for m in REFERENCE.finditer(source)), *url_files]:
+        resolved = urlsplit(urljoin(ORIGIN + path, specifier))
         name = resolved.path.lstrip('/')
         if resolved.netloc != urlsplit(ORIGIN).netloc or not name.startswith(PREFIX):
-            raise ValueError(f'Dependency outside pinned release: {path} -> {match[2]}')
+            raise ValueError(f'Dependency outside pinned release: {path} -> {specifier}')
         result.add(name)
     return result
 
@@ -167,4 +170,7 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, ValueError, RuntimeError) as error:
+        if os.environ.get('GITHUB_ACTIONS') == 'true':
+            message = str(error).replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D')
+            print('::error title=Source import::' + message, flush=True)
         raise SystemExit(str(error))
