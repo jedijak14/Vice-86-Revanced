@@ -162,6 +162,8 @@ export function createHudModel() {
     crew: '',            // who else is in this room
     purse: '',           // what is in the pocket: the cash, and what it came from
     foot: '',            // on foot: the gun in hand, the wind, what is nearest
+    vitals: '',          // on foot: how much of him is left, when any of it is missing
+    radio: '',           // the station on the dial and what it is playing
   };
 }
 
@@ -231,6 +233,29 @@ function footLine(foot) {
   return `${gun}${wind}${near}${door}`;
 }
 
+/**
+ * How much of the walker is left. A full, dry, breathing man needs no line: the row stays dark and
+ * the cluster says nothing. The moment any of it is missing - a wound, a dive, the sea over his head
+ * - the numbers come up, because a number that only appears when it matters is a warning, not clutter.
+ */
+function vitalsLine(foot) {
+  if (!foot || !foot.onFoot) return '';
+  if (foot.dead) return 'down \u00b7 the water or the street got him';
+  const parts = [];
+  const health = foot.health === undefined ? 1 : foot.health;
+  const oxygen = foot.oxygen === undefined ? 1 : foot.oxygen;
+  if (health < 0.995) parts.push(`\u2665 ${Math.round(health * 100)}%`);
+  if (foot.swimming || foot.submerged || oxygen < 0.995) parts.push(`O\u2082 ${Math.round(oxygen * 100)}%`);
+  if (foot.swimming) parts.push(foot.submerged ? 'under' : 'swimming');
+  return parts.join(' \u00b7 ');
+}
+
+/** The radio: which station, and the thing it is playing right now. Empty when the dial is off. */
+function radioLine(radio) {
+  if (!radio || !radio.station) return '';
+  return radio.title ? `${radio.station} \u00b7 ${radio.title}` : radio.station;
+}
+
 function crewLine(net) {
   if (!net || !net.room) return '';
   if (!net.peers) return `Room ${net.room} · waiting`;
@@ -295,6 +320,8 @@ export function updateHudModel(model, input, units, now) {
   model.crew = crewLine(input.net);
   model.purse = purseLine(input.purse);
   model.foot = footLine(input.foot);
+  model.vitals = vitalsLine(input.foot);
+  model.radio = radioLine(input.radio);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

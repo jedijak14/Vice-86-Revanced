@@ -1,0 +1,116 @@
+# The Windows build. The game itself is a web page (see web/), so packaging is a two-step: put the
+# page and desktop/main.js in an app folder, then have @electron/packager wrap it in a real
+# win32-x64 executable with its own Chromium. The build runs here rather than on a laptop because the
+# Electron runtime is a release asset on a host the development sandbox cannot reach.
+#
+# Triggered by a `v*` tag, or by hand from the Actions tab with a version to publish.
+
+name: Windows desktop build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, without the leading v (used for the tag and the asset name)'
+        default: '0.9.0'
+        required: true
+        type: string
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: Vice-86-Revanced
+  ELECTRON_VERSION: '33.4.11'
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage the app folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build\app | Out-Null
+          Copy-Item desktop\main.js build\app\main.js
+          Copy-Item desktop\README.md build\app\README.md
+          if (Test-Path desktop\build\icon.ico) {
+            New-Item -ItemType Directory -Force -Path build\app\build | Out-Null
+            Copy-Item desktop\build\icon.ico build\app\build\icon.ico
+          }
+          # The packaged app needs no devDependencies and no scripts: main.js and the page are all of it.
+          $pkg = Get-Content desktop\package.json -Raw | ConvertFrom-Json
+          $pkg.PSObject.Properties.Remove('devDependencies')
+          $pkg.PSObject.Properties.Remove('scripts')
+          $pkg.version = '${{ steps.version.outputs.version }}'
+          $pkg | ConvertTo-Json -Depth 6 | Set-Content build\app\package.json -Encoding utf8
+          # The whole game, assets included: a release folder is the complete build.
+          Copy-Item -Recurse web build\app\web
+
+      - name: Install the packager
+        run: npm i --no-audit --no-fund "@electron/packager@20.3.0"
+
+      - name: Package for win32-x64
+        shell: bash
+        run: |
+          ARGS=( "build/app" "$APP_NAME"
+                 --platform=win32 --arch=x64
+                 --electron-version="$ELECTRON_VERSION"
+                 --app-version="${{ steps.version.outputs.version }}"
+                 --out dist --overwrite )
+          # The icon is ours and valid, but if a future packager disagrees about it, the release
+          # should still ship: fall back to Electron's own icon rather than fail the run.
+          if [ -f desktop/build/icon.ico ]; then
+            npx @electron/packager "${ARGS[@]}" --icon=desktop/build/icon.ico \
+              || npx @electron/packager "${ARGS[@]}"
+          else
+            npx @electron/packager "${ARGS[@]}"
+          fi
+
+      - name: Zip it and checksum it
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          $asset = "$env:APP_NAME-$v-win-x64.zip"
+          Compress-Archive -Path "dist\$env:APP_NAME-win32-x64\*" -DestinationPath $asset -CompressionLevel Optimal -Force
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" | Out-File -Append -Encoding utf8 "$env:GITHUB_ENV"
+          $size = [math]::Round((Get-Item $asset).Length / 1MB, 1)
+          "asset=$asset" | Out-File -Append -Encoding utf8 "$env:GITHUB_ENV"
+          "size=$size" | Out-File -Append -Encoding utf8 "$env:GITHUB_ENV"
+
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          NOTES="desktop/RELEASE-NOTES.md"
+          {
+            echo "Unzip anywhere and run \`$APP_NAME.exe\`. Nothing else to install: the runtime, the page and every asset are in the folder."
+            echo
+            echo "- Asset: \`$asset\` (${size} MB)"
+            echo "- SHA-256: \`$sha256\`"
+            echo "- Built from \`${GITHUB_SHA:0:7}\` with Electron $ELECTRON_VERSION, win32-x64"
+            echo
+            cat "$NOTES"
+          } > body.md
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$APP_NAME ${{ steps.version.outputs.version }} (Windows x64)" --notes-file body.md || true
+          gh release upload "$TAG" "$asset" --clobber
