@@ -28,6 +28,7 @@ export function createHudFeed({ ui, world }) {
     net: null,
     purse: null,
     foot: null,
+    flight: null,
     jail: null,
     watch: null,
     radio: null,
@@ -86,6 +87,8 @@ export function createHudFeed({ ui, world }) {
       values.net = (status && status.net) || null;
       values.purse = (status && status.purse) || null;
       values.foot = (status && status.foot) || null;
+      // The instruments of whatever he is riding that is not a car: an aeroplane or a motorcycle.
+      values.flight = (status && status.flight) || null;
       // The rest of what the street writes: custody, the eyes on you, the dial, and the line
       // somebody on the pavement is saying out loud (audio/voice.js).
       values.jail = (status && status.jail) || null;

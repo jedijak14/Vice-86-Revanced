@@ -20,7 +20,7 @@
 // traffic moves, and the world keeps the street around the car loaded so that Drive does not
 // wait for it.
 
-import { saturate, smoothstep, lerp, angleDelta } from '../core/math.js';
+import { saturate, smoothstep, lerp, angleDelta, clamp } from '../core/math.js';
 import { FIXED_DT, KIND, surfaceOfField, carSpec, trafficSpec } from '../physics/index.js';
 import { CARS, carById, DEFAULT_CAR } from '../vehicles/cars.js';
 import { MARKING_FILL } from '../world/roads/markings.js';
@@ -39,6 +39,9 @@ import { createFoot, BOARD_DISTANCE, BOARD_SPEED_LIMIT } from './foot.js';
 import { createVitals } from './vitals.js';
 import { createBoarding, awayFromCar, SEAMS } from './boarding.js';
 import { createBoats } from './boats.js';
+import { createPlanes, planeInstruments, writeMatrix as writePlaneMatrix, BOARD_REACH as PLANE_REACH } from './planes.js';
+import { createBikes, bikeInstruments, writeMatrix as writeBikeMatrix, RIDER_HIP } from './bikes.js';
+import { basisFromAttitude } from '../physics/plane.js';
 import { buildCitizens } from '../world/people/citizens.js';
 import { createRadio } from '../audio/radio.js';
 import { setSway } from '../world/people/cast.js';
@@ -301,6 +304,28 @@ export function createGame(deps) {
   let boats = null;
   let boatDriven = -1;
   let boatNear = null;
+  // The airport: three aeroplanes on an apron off the plan's own runways, and the one he is flying
+  // (game/planes.js). A cockpit has no door to swing, so the levers live here instead: a throttle that
+  // is moved a notch at a time because a keyboard has no lever on it, and an attitude the surfaces are
+  // asked to find, because that is what a hand on a stick does and what makes an aeroplane flyable
+  // rather than twitchy. Both start empty and are only read while something is being flown.
+  let planes = null;
+  let planeDriven = -1;
+  let planeNear = null;
+  let boardPlane = -1;
+  let planeThrottle = 0, planeBank = 0, planePitch = 0;
+  let leverUp = false, leverDown = false, gearKey = false;
+  let planeSaidCrash = false, planeSaidEdge = 0;
+  // The kerbs: motorcycles leaning on them where the lane graph says a pavement is, and the one he is
+  // on (game/bikes.js). A bike is taken with the same key as a car and ridden with the same hands.
+  let bikes = null;
+  let bikeDriven = -1;
+  let bikeNear = null;
+  let boardBike = -1;
+  let riderSeated = false;
+  const riderAt = [0, 0, 0];
+  /** One attitude basis, reused: the chase camera of both machines banks with them. */
+  const camBasis = {};
   // The citizen shelf's officer indices, and the officers currently walking the player down.
   let officerChars = [], citizenChars = [];
   const officers = [];
@@ -542,6 +567,148 @@ export function createGame(deps) {
     camera.setMode('chase');
     camera.snap();
     toast('Over the side');
+  }
+
+  /**
+   * One frame of the cockpit's own levers. A keyboard has neither a throttle nor a stick, so it gets the
+   * nearest honest thing to each: the throttle is moved a notch at a time by the two keys a car uses for
+   * nitrous and the handbrake, and the stick asks for an *attitude* which the surfaces then find, the way
+   * a pilot's hand holds a bank rather than holding a deflection. Everything handed to the physics from
+   * here is a real control input - the aeroplane still flies itself, still stalls when the wing is asked
+   * for more than it has, and still lands badly when it is flown badly.
+   * @param {number} dt  seconds @param {object} controls  the frame's held actions
+   * @param {object} p   the airframe's body (physics/plane.js)
+   */
+  function cockpit(dt, controls, p) {
+    // The throttle: eight notches between closed and full, and only the two ends are worth announcing.
+    const up = controls.boost > 0.5, down = controls.handbrake > 0.5;
+    if (up && !leverUp) {
+      planeThrottle = Math.min(1, planeThrottle + 1 / 8);
+      if (planeThrottle >= 1) toast('Full throttle');
+    }
+    if (down && !leverDown) {
+      planeThrottle = Math.max(0, planeThrottle - 1 / 8);
+      if (planeThrottle <= 0) toast('Throttle closed');
+    }
+    leverUp = up; leverDown = down;
+    // The undercarriage lever, on the key a car honks with: an aeroplane has no horn and G is where a
+    // pilot's hand goes for the gear anyway.
+    const gear = controls.horn > 0.5;
+    if (gear && !gearKey) {
+      p.gearDown = !p.gearDown;
+      toast(p.gearDown ? 'Gear down · check the three greens' : 'Gear up');
+      if (audio) audio.door(true);
+    }
+    gearKey = gear;
+    // The attitude asked for. W and S move the nose, A and D move the wings, and both stay where they
+    // were left, because that is what an aeroplane does when a pilot lets go of the stick: nothing.
+    planePitch = clamp(planePitch + (controls.throttle - controls.brake) * 14 * dt, -18, 24);
+    if (p.onGround) {
+      planeBank = 0;
+      planePitch = clamp(planePitch, -6, 16);
+      // The flare is over once the wheels are on and the run has bled off: the nose comes back down to
+      // the runway rather than holding the last second of the approach's attitude.
+      if (p.speed < 14) planePitch *= Math.pow(0.05, dt);
+    // A and D ask for a bank, in the sign the rest of the game steers by: positive is left, which is the
+    // same sign as the roll the wings answer with and the yaw the turn goes round in.
+    } else planeBank = clamp(planeBank + controls.steer * 40 * dt, -75, 75);
+    const bankErr = planeBank - p.roll * 180 / Math.PI;
+    const pitchErr = planePitch - p.pitch * 180 / Math.PI;
+    const aileron = p.onGround ? 0 : clamp(bankErr * 0.09, -1, 1);
+    return {
+      throttle: planeThrottle,
+      elevator: clamp(pitchErr * 0.14, -1, 1),
+      aileron,
+      // On the ground the rudder and the nosewheel do the steering; in the air the rudder follows the
+      // aileron, which is what a pilot's feet do without being asked and what keeps a turn coordinated
+      // rather than skidding through it.
+      rudder: p.onGround ? controls.steer : aileron * 0.45,
+      brake: controls.handbrake > 0.5 && planeThrottle <= 0 ? 1 : 0,
+    };
+  }
+
+  /** Into the left seat. The runway in use is named, because that is the first thing a pilot checks. */
+  function enterPlane() {
+    const entry = planes && planes.get(boardPlane);
+    if (!entry) { toast('It is not there any more'); return; }
+    planeDriven = entry.id;
+    const p = entry.plane;
+    onFoot = false;
+    foot.letGo();
+    gun.stow();
+    input.looking = false;
+    input.lookMode = 'orbit';
+    camera.setMode('chase');
+    camera.snap();
+    if (audio) audio.door(true);
+    planeThrottle = 0; planeBank = 0; planePitch = 0;
+    leverUp = leverDown = gearKey = false;
+    planeSaidCrash = false;
+    riderSeated = false;
+    if (!entry.taken) {
+      entry.taken = true;
+      wanted.add('stolen an aeroplane', 2);
+    }
+    const rw = planes.runway;
+    toast(rw ? `${entry.name} · lined up with runway ${rw.name}` : `${entry.name} · on the apron`);
+  }
+
+  /**
+   * Out of the cockpit, onto whatever is under the wing. Only a machine that has stopped on the ground
+   * can be got out of: an aeroplane at 120 knots has no door a man can open, and the game says so rather
+   * than letting him step out into the air.
+   */
+  function leavePlane() {
+    const entry = planes.get(planeDriven);
+    const p = entry.plane;
+    // Out on the port side, which is the side an aeroplane's door is on and the side a pilot climbs out
+    // of, and the same axis a positive roll banks about. He is put facing away from the wing.
+    const lateral = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
+    const x = p.pos[0] + lateral[0] * 3.4, z = p.pos[2] + lateral[2] * 3.4;
+    onFoot = true;
+    planeDriven = -1;
+    foot.place(x, groundHeight(x, z), z, p.yaw + Math.PI * 0.5);
+    camera.setMode('chase');
+    camera.snap();
+    toast(p.crashed ? 'Out of the wreck' : 'On the tarmac');
+  }
+
+  /** A leg over the saddle. The body stays where the camera can see it, which is the whole difference. */
+  function enterBike() {
+    const entry = bikes && bikes.get(boardBike);
+    if (!entry) { toast('It is not there any more'); return; }
+    bikeDriven = entry.id;
+    onFoot = false;
+    foot.letGo();
+    gun.stow();
+    input.looking = false;
+    input.lookMode = 'orbit';
+    camera.setMode('chase');
+    camera.snap();
+    if (audio) audio.door(false);
+    riderSeated = false;
+    if (!entry.taken) {
+      entry.taken = true;
+      wanted.add('stolen a motorcycle', 1);
+    }
+    toast(`${entry.name} · ${entry.bike.fallen ? 'on its side, R picks it up' : 'taken'}`);
+  }
+
+  /** Off, and standing on the kerb beside it: a machine that is still moving keeps its rider. */
+  function leaveBike() {
+    const entry = bikes.get(bikeDriven);
+    const bk = entry.bike;
+    // Off on the left, which is the side a motorcycle is mounted and dismounted from, and standing on the
+    // kerb rather than in the road the machine was just in.
+    const lateral = [Math.cos(bk.yaw), 0, -Math.sin(bk.yaw)];
+    const x = bk.pos[0] + lateral[0] * 1.1, z = bk.pos[2] + lateral[2] * 1.1;
+    onFoot = true;
+    bikeDriven = -1;
+    foot.place(x, groundHeight(x, z), z, bk.yaw);
+    camera.setMode('chase');
+    camera.snap();
+    if (foot.person) { foot.person.visible(true); foot.person.role('idle'); }
+    toast('Off');
   }
 
   // ---- shops ----------------------------------------------------------------------------------------------
@@ -1295,11 +1462,33 @@ export function createGame(deps) {
           boardBoat = boatNear.id;
           boarding.begin(false, { x: foot.pos[0], y: foot.pos[1], z: foot.pos[2] },
             awayFromCar(boatNear.x, boatNear.z, boatNear.yaw, 1));
+        } else if (!boarding.active && planeNear && planeDriven < 0) {
+          boardTag = 'plane';
+          boardPlane = planeNear.id;
+          boarding.begin(false, { x: foot.pos[0], y: foot.pos[1], z: foot.pos[2] },
+            awayFromCar(planeNear.x, planeNear.z, planeNear.yaw, 1));
+        } else if (!boarding.active && bikeNear && bikeDriven < 0) {
+          boardTag = 'bike';
+          boardBike = bikeNear.id;
+          boarding.begin(false, { x: foot.pos[0], y: foot.pos[1], z: foot.pos[2] },
+            awayFromCar(bikeNear.x, bikeNear.z, bikeNear.yaw, 1));
         }
       }
       else if (boatDriven >= 0) {
         const b = boats.get(boatDriven).boat;
         if (b.speed < 2.5) leaveBoat();
+        else toast('Slow her down first');
+      }
+      else if (planeDriven >= 0) {
+        const p = planes.get(planeDriven).plane;
+        // A wreck is got out of at any speed, because it is not going anywhere; a flying aeroplane is not
+        // got out of at all.
+        if (p.crashed || (p.onGround && p.speed < 4)) leavePlane();
+        else toast(p.onGround ? 'Slow her down first' : 'Not from up here');
+      }
+      else if (bikeDriven >= 0) {
+        const bk = bikes.get(bikeDriven).bike;
+        if (bk.fallen || Math.abs(bk.speed) < 2.5) leaveBike();
         else toast('Slow her down first');
       }
       else if (Math.abs(player.forwardSpeed || 0) < 2.2) stepOut();
@@ -1333,12 +1522,27 @@ export function createGame(deps) {
       if (onFoot) { footFirst = !footFirst; camera.snap(); }
       else camera.nextMode();
     }
-    if (input.consume('headlamps') && driving) toast(HEADLAMP_LABELS[player.cycleHeadlamps()]);
+    if (input.consume('headlamps') && driving) {
+      // In a cockpit the same key is the flap lever, which is the one thing a landing needs and a car
+      // does not have: three detents, and the panel says which one is selected.
+      const p = planeDriven >= 0 && planes ? planes.get(planeDriven).plane : null;
+      if (p) {
+        p.flaps = (p.flaps + 1) % 3;
+        toast(['Flaps up', 'Flaps 15', 'Flaps 32'][p.flaps]);
+      } else toast(HEADLAMP_LABELS[player.cycleHeadlamps()]);
+    }
     if (input.consume('recover') && phase.name === 'driving') {
-      // The same key means two things, because a man on the pavement has nothing to recover: the car is
-      // where he left it. R is the natural key for a magazine, and the street has no other use for it.
+      // The same key means three things, because a man on the pavement has nothing to recover: the car is
+      // where he left it. On foot R is the natural key for a magazine. On a motorcycle that has gone down
+      // it is a lift back onto its wheels, which is what the panel is asking him for. And in the car it
+      // puts the car back on the road — only in the car, because an aeroplane's R is not the car's
+      // business, and a boat's even less so.
       if (onFoot) { if (gun.startReload() && foot.person) foot.person.role(gun.weapon.hands === 2 ? 'reload2' : 'reload', { once: true, upper: true }); }
-      else { recoverToRoad(); toast('Back on the road'); }
+      else if (bikeDriven >= 0 && bikes) {
+        if (bikes.get(bikeDriven).bike.fallen) { bikes.right(bikeDriven); toast('Picked it up'); }
+        else toast('It is still under you');
+      }
+      else if (boatDriven < 0 && planeDriven < 0) { recoverToRoad(); toast('Back on the road'); }
     }
     if (input.consume('time') && driving) {
       const name = clock.nextTimePreset();
@@ -1426,16 +1630,43 @@ export function createGame(deps) {
     car.gear = vehicle.gear; car.speed = vehicle.speed; car.slip = player.slip; car.slipAngle = player.slipAngle;
     car.brake = vehicle.brake; car.surface = player.surface; car.airborne = vehicle.airborne; car.wet = weather.wetness; car.boost = nitrous.flow;
     car.turbo = vehicle.turbo || 0;
-    // Where the car is, for the recorded engine: on foot, a car left idling fades and pans as the
-    // player walks away from it instead of following his head at full level.
-    car.position = player.pos;
-    car.cabin = camera.mode === 'bonnet' ? 1 : 0;
+    if (planeDriven >= 0 && planes) {
+      // What the listener is sitting in is the aeroplane, not the car he left on the apron: the engine
+      // note follows the propeller's own speed and the throttle lever, the road noise goes away, and the
+      // cabin is a fraction of what a car's is because a light aeroplane is a very thin box.
+      const p = planes.get(planeDriven).plane;
+      car.rpm = 850 + p.input.throttle * 1750 + Math.min(600, p.ias * 4);
+      car.redline = 2900; car.throttle = p.input.throttle; car.load = p.input.throttle;
+      car.gear = 1; car.speed = p.speed; car.slip = 0; car.slipAngle = 0;
+      car.brake = p.input.brake; car.surface = 'asphalt'; car.airborne = !p.onGround;
+      car.boost = 0; car.turbo = 0; car.cabin = 0.45;
+      car.position = p.pos;
+    } else if (bikeDriven >= 0 && bikes) {
+      // A motorcycle is the same engine note with no cabin around it at all, and the tyres on the road
+      // the whole time: the only thing that changes is that there is no bodywork between him and it.
+      const bk = bikes.get(bikeDriven).bike;
+      car.rpm = bk.rpm; car.redline = bk.spec.redline; car.throttle = bk.input.throttle;
+      car.load = bk.input.throttle; car.gear = bk.gear; car.speed = bk.speed;
+      car.slip = bk.sliding ? 0.8 : 0; car.slipAngle = bk.lean; car.brake = bk.input.brake;
+      car.surface = 'asphalt'; car.airborne = false; car.boost = 0; car.turbo = 0; car.cabin = 0;
+      car.position = bk.pos;
+    } else {
+      // Where the car is, for the recorded engine: on foot, a car left idling fades and pans as the
+      // player walks away from it instead of following his head at full level. In an aeroplane or on a
+      // motorcycle the engine is where the man is and not where he left the car, which is a difference of
+      // several kilometres the moment he is airborne — so these two belong to the car and to nothing else.
+      car.position = player.pos;
+      car.cabin = camera.mode === 'bonnet' ? 1 : 0;
+    }
     env.rain = weather.rain; env.wind = Math.hypot(weather.windX, weather.windZ); env.night = clock.env.night;
     env.timeOfDay = clock.timeOfDay; env.district = hud.district; env.neon = clock.env.switches.neon;
     audio.update(simDt, audioState);
     // The wail of the nearest unit, silent (and unbuilt) while nobody is after the player.
     if (police && audio.siren) audio.siren(phase.name === 'driving' ? police.siren.level : 0, police.siren.position);
-    const horn = phase.name === 'driving' && input.state.horn > 0;
+    // A cockpit has no horn in it: the key that honks a car is the undercarriage lever there, and a horn
+    // that sounds every time the gear comes down is a horn nobody would believe. A motorcycle keeps its
+    // own, which is the same key doing the same job on a machine that really has one.
+    const horn = phase.name === 'driving' && planeDriven < 0 && input.state.horn > 0;
     if (horn !== hornOn) { hornOn = horn; audio.horn(horn); }
     honkTraffic();
   }
@@ -1855,6 +2086,8 @@ export function createGame(deps) {
         // offered, and foot.js picks between it and his own by distance alone.
         streetCar = !inShop ? traffic.nearestTo(foot.pos[0], foot.pos[2], BOARD_DISTANCE, BOARD_SPEED_LIMIT) : null;
         boatNear = null;
+        planeNear = null;
+        bikeNear = null;
         // A car that drove off mid-door takes the sequence with it, and the body back with it.
         if (boarding.active && boardTag === 'traffic' && (!streetCar || !streetCar.active)) {
           boarding.cancel();
@@ -1875,6 +2108,21 @@ export function createGame(deps) {
           });
         }
         if (boats && !foot.near && !inShop) boatNear = boats.nearestTo(foot.pos[0], foot.pos[2], 3.4);
+        // The airport's apron and the city's kerbs, built the first time a man is standing on the street
+        // and able to reach either. The aeroplanes are parked off the plan's own runways, so a map with
+        // no airport in it simply has no aeroplanes in it; the bikes go wherever there is a pavement.
+        if (!planes && world.plan) {
+          planes = createPlanes({ renderer, plan: world.plan, ground: (x, z) => groundHeight(x, z) });
+        }
+        if (planes && !boatNear && !foot.near && !inShop) {
+          planeNear = planes.nearestTo(foot.pos[0], foot.pos[2], PLANE_REACH);
+        }
+        if (!bikes && graph) {
+          bikes = createBikes({ renderer, graph, ground: (x, z) => groundHeight(x, z), seed });
+        }
+        if (bikes && !boatNear && !planeNear && !foot.near && !inShop) {
+          bikeNear = bikes.nearestTo(foot.pos[0], foot.pos[2]);
+        }
         // The lung, and the slow clock: breath empties under the surface and the wound closes only
         // while the street leaves him alone (game/vitals.js).
         vitals.breath(simDt, foot.submerged);
@@ -1889,14 +2137,28 @@ export function createGame(deps) {
             foot.play('sitdown');
             const seams = boarding.occupied ? SEAMS.occupied : SEAMS.empty;
             const c = boardTag === 'traffic' && streetCar && streetCar.active ? streetCar
-              : boardTag === 'boat' && boats && boats.get(boardBoat) ? boats.get(boardBoat).boat : null;
+              : boardTag === 'boat' && boats && boats.get(boardBoat) ? boats.get(boardBoat).boat
+                : boardTag === 'plane' && planes && planes.get(boardPlane) ? planes.get(boardPlane).plane
+                  : boardTag === 'bike' && bikes && bikes.get(boardBike) ? bikes.get(boardBike).bike : null;
             const cyaw = c ? c.yaw : (player.vehicle ? player.vehicle.yaw : 0);
             const cx = c ? c.pos[0] : player.pos[0], cz = c ? c.pos[2] : player.pos[2];
+            // Across the machine and along it, in the world's own frame. `rgt` is the body's lateral
+            // axis — the one basisFromAttitude calls `lateral` and a positive roll banks about, which on
+            // a map whose +Z is south is the machine's left side — and the offsets below were tuned
+            // against it, so a sign here is a seat on the other side of the cabin.
             const rgt = [Math.cos(cyaw), -Math.sin(cyaw)];
             const fwd = [Math.sin(cyaw), Math.cos(cyaw)];
+            // Where the body ends up: a gunwale, the left seat of a cockpit two rows back from the panel,
+            // a saddle on the centreline, or a car's driver's seat. Each is the place the machine actually
+            // has, and the aeroplane's is on the same side as the door he climbed in through and will
+            // climb out of, because a light aeroplane's pilot sits on the left.
             const seat = boardTag === 'boat'
               ? [cx - fwd[0] * 0.6, cz - fwd[2] * 0.6]
-              : [cx - rgt[0] * 0.42 + fwd[0] * 0.08, cz - rgt[1] * 0.42 + fwd[2] * 0.08];
+              : boardTag === 'plane'
+                ? [cx + rgt[0] * 0.42 + fwd[0] * 1.4, cz + rgt[1] * 0.42 + fwd[2] * 1.4]
+                : boardTag === 'bike'
+                  ? [cx - fwd[0] * 0.1, cz - fwd[2] * 0.1]
+                  : [cx - rgt[0] * 0.42 + fwd[0] * 0.08, cz - rgt[1] * 0.42 + fwd[2] * 0.08];
             const dx = foot.pos[0] - cx, dz = foot.pos[2] - cz;
             const dl = Math.hypot(dx, dz) || 1;
             boardArc = {
@@ -1906,12 +2168,16 @@ export function createGame(deps) {
             };
             if (audio) audio.door(true);
           } else if (ev === 'seated') {
-            if (foot.person) foot.person.visible(false);
+            // A motorcycle is ridden rather than sat inside, so its rider stays on screen: the body is the
+            // only part of a bike a spectator can see moving.
+            if (foot.person) foot.person.visible(boardTag === 'bike');
             if (audio) audio.door(false);
             boardArc = null;
           } else if (ev === 'done') {
             if (boardTag === 'traffic') takeCar();
             else if (boardTag === 'boat') enterBoat();
+            else if (boardTag === 'plane') enterPlane();
+            else if (boardTag === 'bike') enterBike();
             else climbIn();
           }
         }
@@ -1946,8 +2212,18 @@ export function createGame(deps) {
         } else if (foot.grounded && foot.pos[1] > LAND_Y - 0.4 && !foot.swimming) {
           drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
         }
-      } else {
+      } else if (planeDriven < 0 && bikeDriven < 0) {
         player.drive(controls, boost);
+      }
+      if (planes) {
+        planes.step(simDt, planeDriven, planeDriven >= 0 ? cockpit(simDt, controls, planes.get(planeDriven).plane) : null);
+      }
+      if (bikes) {
+        bikes.step(simDt, bikeDriven, bikeDriven >= 0 ? {
+          throttle: controls.throttle,
+          brake: Math.min(1, controls.brake + controls.handbrake * 0.85),
+          steer: controls.steer,
+        } : null);
       }
       if (boats) {
         boats.step(simDt, boatDriven, boatDriven >= 0 ? {
@@ -2032,6 +2308,45 @@ export function createGame(deps) {
           [b.pos[0] + Math.sin(b.yaw) * 2, b.pos[1] + 0.7, b.pos[2] + Math.cos(b.yaw) * 2],
           1.05,
         );
+      }
+      if (planeDriven >= 0 && planes) {
+        // Behind the tail and above the wing, in the aeroplane's own frame: the horizon rolls with the
+        // wings, which is the only way a bank reads as a bank from behind rather than as the whole world
+        // going crooked. The pitch is taken at a fraction of the real one so that a dive does not put the
+        // camera under the ground looking up at a tail.
+        const p = planes.get(planeDriven).plane;
+        const ax = basisFromAttitude(p.yaw, p.pitch * 0.45, p.roll * 0.8, camBasis);
+        const back = 15 + Math.min(16, p.speed * 0.16), up = 4.6 + Math.min(4, p.speed * 0.03);
+        camera.place(
+          [p.pos[0] - ax.forward[0] * back + ax.up[0] * up,
+            p.pos[1] - ax.forward[1] * back + ax.up[1] * up,
+            p.pos[2] - ax.forward[2] * back + ax.up[2] * up],
+          [p.pos[0] + ax.forward[0] * 8, p.pos[1] + ax.forward[1] * 8 + 0.6, p.pos[2] + ax.forward[2] * 8],
+          1.02,
+        );
+      }
+      if (bikeDriven >= 0 && bikes) {
+        const bk = bikes.get(bikeDriven).bike;
+        const ax = basisFromAttitude(bk.yaw, bk.pitch * 0.6, bk.lean * 0.4, camBasis);
+        const back = 4.6 + Math.min(2.6, bk.speed * 0.05), up = 1.9 + Math.min(0.8, bk.speed * 0.012);
+        camera.place(
+          [bk.pos[0] - ax.forward[0] * back + ax.up[0] * up,
+            bk.pos[1] - ax.forward[1] * back + ax.up[1] * up,
+            bk.pos[2] - ax.forward[2] * back + ax.up[2] * up],
+          [bk.pos[0] + ax.forward[0] * 3.4, bk.pos[1] + 1.1, bk.pos[2] + ax.forward[2] * 3.4],
+          1.02,
+        );
+        // The rider, on the saddle and leaning with the machine: a body placed upright on a bike that is
+        // forty degrees over is the one thing that gives the whole idea away.
+        if (foot.person) {
+          const s = bk.seatPos;
+          riderAt[0] = s[0]; riderAt[1] = s[1] - RIDER_HIP; riderAt[2] = s[2];
+          foot.person.yaw = bk.yaw;
+          foot.person.position[0] = riderAt[0]; foot.person.position[1] = riderAt[1]; foot.person.position[2] = riderAt[2];
+          foot.person.frame(simDt, 0);
+          writeBikeMatrix(foot.person.dynamic.matrix, bk, riderAt);
+          if (!riderSeated) { foot.person.role('sit'); riderSeated = true; }
+        }
       }
       cameraDistance = Math.hypot(camera.position[0] - shown[0], camera.position[1] - shown[1], camera.position[2] - shown[2]);
       if (player.vehicle.inWater && phase.name === 'driving') {
@@ -2120,6 +2435,11 @@ export function createGame(deps) {
             }
           }
         }
+        // The instrument row: an aeroplane's panel or a motorcycle's three numbers, and nothing when he
+        // is in a car, because a car has a dial of its own already.
+        hudStatus.flight = planeDriven >= 0 && planes
+          ? planeInstruments(planes.get(planeDriven).plane, planes.takeoffLabel(planes.get(planeDriven).plane))
+          : bikeDriven >= 0 && bikes ? bikeInstruments(bikes.get(bikeDriven).bike) : null;
         hudStatus.jail = jail.snapshot();
         const watch = witness.seen(player.pos[0], player.pos[2]);
         hudStatus.watch = watch.zone ? { kind: watch.zone.kind, camera: watch.camera, people: watch.people } : null;
@@ -2129,9 +2449,13 @@ export function createGame(deps) {
           health: vitals.health, oxygen: vitals.oxygen, swimming: foot.swimming, submerged: foot.submerged,
           dead: vitals.dead,
           boat: boatDriven >= 0 ? (boats.get(boatDriven).name) : (boatNear ? boatNear.name : null),
+          plane: planeDriven >= 0 ? (planes.get(planeDriven).name) : (planeNear ? planeNear.name : null),
+          bike: bikeDriven >= 0 ? (bikes.get(bikeDriven).name) : (bikeNear ? bikeNear.name : null),
           door: inShop ? (shopSaid || 'E for the door')
             : boarding.active ? (boarding.phase === 'pull' ? 'Getting him out' : 'Getting in')
               : boatNear && !foot.near ? 'F for the boat'
+                : planeNear && !foot.near ? 'F for the aeroplane'
+                  : bikeNear && !foot.near ? 'F for the motorcycle'
                 : gun.weapon && gun.needReload ? 'R for a magazine'
                 : !onFoot && shopNear ? 'E for the shop' : null,
         } : (foot.near ? { onFoot: false, boarding: false, door: 'F to get out' } : null);
@@ -2157,6 +2481,22 @@ export function createGame(deps) {
             }
           }
           if (onFoot && foot.swimming) wake.splash(foot.pos[0], foot.pos[2], 0.9, -14 * simDt);
+        }
+        // An aeroplane that has met the ground at an angle it was not built for stays where it met it,
+        // and says so once: the machine is written off and the pilot is standing next to it.
+        if (planeDriven >= 0 && planes) {
+          const p = planes.get(planeDriven).plane;
+          if (p.crashed && !planeSaidCrash) {
+            planeSaidCrash = true;
+            camera.addTrauma(0.5);
+            toast('That aeroplane is written off · F to climb out');
+          }
+          // Nothing is out there past the map, and saying so once every twenty seconds is cheaper than
+          // letting a man fly for ten minutes into an empty grey sea and wonder whether it is broken.
+          planeSaidEdge -= simDt;
+          if (Math.abs(p.pos[0]) > 6400 || Math.abs(p.pos[2]) > 6400 || p.altitude > 3800) {
+            if (planeSaidEdge <= 0) { planeSaidEdge = 20; toast('Turn back · there is nothing out here'); }
+          }
         }
         if (owners.length) stepOwners(simDt);
         if (jail.jailed) jail.step(simDt, input.state.handbrake > 0.5);
@@ -2273,6 +2613,9 @@ export function createGame(deps) {
       effects.dispose();
       skids.clear();
       traffic.dispose();
+      if (boats) boats.dispose();
+      if (planes) planes.dispose();
+      if (bikes) bikes.dispose();
       player.dispose();
       showroom.dispose();
     },

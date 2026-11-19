@@ -30,7 +30,9 @@ export const KEYBOARD_HELP = Object.freeze([
   { action: 'headlamps', label: 'Headlamps', keys: ['H'] },
   { action: 'time', label: 'Next time of day', keys: ['T'] },
   { action: 'weather', label: 'Change weather', keys: ['Y'] },
-  { action: 'recover', label: 'Recover to road · reload (on foot)', keys: ['R'] },
+  { action: 'race', label: 'Take the street race on offer here', keys: ['V'] },
+  { action: 'radio', label: 'The dial: next station on the radio', keys: ['M'] },
+  { action: 'recover', label: 'Recover to road · reload (on foot) · pick a motorcycle up', keys: ['R'] },
   { action: 'pause', label: 'Pause', keys: ['Esc', 'P'] },
 ]);
 
@@ -39,17 +41,48 @@ export const GAMEPAD_HELP = Object.freeze([
   { action: 'brake', label: 'Brake and reverse', keys: ['LT'] },
   { action: 'steer', label: 'Steer', keys: ['Left stick'] },
   { action: 'handbrake', label: 'Handbrake · fire (on foot)', keys: ['A'] },
-  { action: 'boost', label: 'Nitrous · run (on foot)', keys: ['X', 'LB'] },
+  { action: 'boost', label: 'Nitrous · run (on foot)', keys: ['X'] },
   { action: 'lookBack', label: 'Look back · crouch (on foot)', keys: ['B'] },
-  { action: 'foot', label: 'Get out, get back in', keys: ['RB'] },
+  { action: 'foot', label: 'Get out, get back in, take a car off the street', keys: ['RB'] },
+  { action: 'weapon', label: 'Draw or stow the gun', keys: ['R3'] },
 
   { action: 'horn', label: 'Horn', keys: ['L3'] },
   { action: 'camera', label: 'Change camera', keys: ['Y'] },
   { action: 'headlamps', label: 'Headlamps', keys: ['D-pad \u2190'] },
+  { action: 'shop', label: 'Use a door · shops, hold-ups, a bag of goods', keys: ['D-pad \u2192'] },
   { action: 'time', label: 'Next time of day', keys: ['D-pad \u2191'] },
   { action: 'weather', label: 'Change weather', keys: ['D-pad \u2193'] },
-  { action: 'recover', label: 'Recover to road', keys: ['Back'] },
+  { action: 'race', label: 'Take the street race on offer here', keys: ['LB'] },
+  { action: 'recover', label: 'Recover to road · pick a motorcycle up', keys: ['Back'] },
   { action: 'pause', label: 'Pause', keys: ['Start'] },
+]);
+
+/**
+ * What the same keys mean once a man is in a cockpit. Nothing here is a new binding: an aeroplane has no
+ * horn and no headlamps a player needs, so the keys a car uses for those are the levers a pilot uses
+ * instead, and the only way anybody would find that out is by reading this. The stick asks for an
+ * *attitude* and holds it — let go and the aeroplane keeps doing what it was doing, which is the one thing
+ * about flying that a driver does not expect.
+ */
+export const COCKPIT_HELP = Object.freeze([
+  { label: 'Nose up, nose down (held where it is put)', keys: ['W', 'S'] },
+  { label: 'Bank left, bank right (held where it is put)', keys: ['A', 'D'] },
+  { label: 'Throttle up, in eight notches', keys: ['Shift'] },
+  { label: 'Throttle down, and the brakes at the bottom of its travel', keys: ['Space'] },
+  { label: 'Undercarriage up or down', keys: ['G'] },
+  { label: 'Flaps: up, 15, 32', keys: ['H'] },
+  { label: 'Climb out, once she has stopped on the ground', keys: ['F'] },
+  { label: 'Change camera', keys: ['C'] },
+]);
+
+/** And what they mean with a leg over a saddle: a motorcycle is ridden with the car's own hands. */
+export const SADDLE_HELP = Object.freeze([
+  { label: 'Throttle, and the brake', keys: ['W', 'S'] },
+  { label: 'Lean into the corner, which is how it turns', keys: ['A', 'D'] },
+  { label: 'More brake, on top of the pedal', keys: ['Space'] },
+  { label: 'Pick it up off the tarmac when it has gone down', keys: ['R'] },
+  { label: 'Get off, once it has slowed to walking pace', keys: ['F'] },
+  { label: 'Change camera', keys: ['C'] },
 ]);
 
 const MENU_HELP = Object.freeze([
@@ -156,8 +189,12 @@ export function buildScreens(ctx) {
     id: 'controls', kind: 'panel', title: 'Controls', wide: true,
     build: () => [
       ...keyList(),
+      staticRow(bindingTable(doc, 'In a cockpit', COCKPIT_HELP, 'keys')),
+      staticRow(bindingTable(doc, 'On a motorcycle', SADDLE_HELP, 'keys')),
+      staticRow(el(doc, 'p', 'row-note', 'An aeroplane flies itself: the stick asks for an attitude and lets go of it when you do. Rotate at the speed the panel calls the stall speed times 1.2, and a bad landing is one that arrives with more than five and a half metres a second of sink, more than twenty degrees of bank, or the nose below the runway.')),
       staticRow(bindingTable(doc, 'Menus, keyboard', MENU_HELP, 'keys')),
       staticRow(bindingTable(doc, 'Menus, controller', MENU_HELP, 'pad')),
+      staticRow(el(doc, 'p', 'row-note', 'On a controller the radio dial has no button left: it is M on the keyboard, and the stations are the ones the game picks for you until somebody presses it.')),
       staticRow(el(doc, 'p', 'row-note', 'On a touch screen: slide a thumb along the strip at the lower left to steer; the pedals are at the lower right, with the handbrake above the brake and nitrous beside them.')),
     ],
   };

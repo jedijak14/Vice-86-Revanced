@@ -282,6 +282,35 @@ function voiceLine(v) {
   return v.who ? `${v.who}: \u201c${v.text}\u201d` : `\u201c${v.text}\u201d`;
 }
 
+/**
+ * The instruments, for whichever machine is not a car. An aeroplane gets the six things a pilot reads
+ * in a glance - speed, height, whether he is going up or down, where he is pointing, the lever, and the
+ * two configuration items that kill people when they are forgotten - and a motorcycle gets the three a
+ * rider has: how fast, which gear, and how far over it is.
+ */
+function flightLine(f) {
+  if (!f) return '';
+  if (f.kind === 'plane') {
+    const parts = [
+      `${f.ias} kt`, `${f.alt} ft`, `${f.vsi >= 0 ? '+' : '\u2212'}${Math.abs(f.vsi)} fpm`,
+      `${String(f.heading).padStart(3, '0')}\u00b0`,
+      `THR ${f.throttle}%`, Math.abs(f.bank) < 1 ? 'WINGS LEVEL' : `BANK ${f.bank > 0 ? 'L' : 'R'}${Math.abs(f.bank)}\u00b0`,
+      f.gear ? 'GEAR DN' : 'GEAR UP', f.flaps ? `FLAP ${f.flaps}` : null,
+      f.runway ? `RWY ${f.runway}` : null,
+    ];
+    const warn = f.crashed ? 'WRITTEN OFF' : f.stalled ? 'STALL' : f.overspeed ? 'OVERSPEED' : f.gearUnsafe ? 'TOO FAST FOR THE GEAR' : null;
+    return warn ? `${parts.filter(Boolean).join(' \u00b7 ')} \u00b7 ${warn}` : parts.filter(Boolean).join(' \u00b7 ');
+  }
+  if (f.kind === 'bike') {
+    const parts = [`${f.speed} km/h`, `${f.gear} of ${f.gears}`, `${f.rpm} rpm`, `over ${f.lean > 0 ? 'left' : 'right'} ${Math.abs(f.lean)}\u00b0`];
+    if (f.sliding) parts.push('THE TYRES ARE GONE');
+    if (f.fallen) parts.push('ON ITS SIDE \u00b7 R to pick it up');
+    else if (f.footDown) parts.push('a foot down');
+    return parts.join(' \u00b7 ');
+  }
+  return '';
+}
+
 function crewLine(net) {
   if (!net || !net.room) return '';
   if (!net.peers) return `Room ${net.room} · waiting`;
@@ -355,6 +384,7 @@ export function updateHudModel(model, input, units, now) {
   model.watch = watchLine(input.watch);
   model.jail = jailLine(input.jail);
   model.voice = voiceLine(input.voice);
+  model.flight = flightLine(input.flight);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

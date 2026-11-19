@@ -19,6 +19,8 @@ import { createWeapon } from '../../web/src/game/weapons.js';
 import { createPurse } from '../../web/src/game/money.js';
 import { createTraffic } from '../../web/src/game/traffic.js';
 import { prepareLaneGraph } from '../../web/src/game/lanes.js';
+import { createPlanes } from '../../web/src/game/planes.js';
+import { createBikes } from '../../web/src/game/bikes.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gameSource = readFileSync(join(here, '../../web/src/game/game.js'), 'utf8');
@@ -133,4 +135,39 @@ test('the shop records the room is built from are where indexShops put them', ()
   const plan = { blocks: [], lots: [] };
   const list = indexShops(plan, { field: () => ({ kind: 'pavement' }), rng: () => 0.5, limit: 8 });
   assert.ok(Array.isArray(list) || typeof list === 'object', 'an empty plan yields a list, not a throw');
+});
+
+test('the hangar and the bike rack answer to what the frame loop calls them by', () => {
+  // Both are reached for from inside branches that only run when a man walks up to an aeroplane or a
+  // motorcycle, which is exactly where a name that does not exist hides: the game boots, the city runs,
+  // and nothing notices until somebody presses F on a kerb and the frame loop throws. `takeoffLabel` is
+  // the worst of them, because it is read once a frame from the instrument panel and only while flying.
+  const planes = createPlanes({ ground: () => 1.2 });
+  assertWired('planes', planes, 'game/planes.js is the airport, and game.js only knows these names');
+  for (const name of ['nearestTo', 'takeoffLabel', 'step', 'get', 'dispose']) {
+    assert.equal(typeof planes[name], 'function', `planes.${name} is something that can be called`);
+  }
+  assert.ok('runway' in planes, 'and the strip in use is a property rather than a call');
+
+  const bikes = createBikes({ ground: () => 1.2, seed: 11 });
+  assertWired('bikes', bikes, 'game/bikes.js is the kerb, and game.js only knows these names');
+  for (const name of ['nearestTo', 'step', 'get', 'dispose']) {
+    assert.equal(typeof bikes[name], 'function', `bikes.${name} is something that can be called`);
+  }
+
+  // And the two are usable over a real street, not just present: a machine is held out to a man standing
+  // at it, stepped with a rider on it, picked up when it falls over, and disposed of without a renderer.
+  const graph = prepareLaneGraph({
+    lanes: [{ pts: [0, 0, 0, 0, 0, 400], next: [], speedLimit: 13.4, width: 7 }],
+    junctions: [],
+  });
+  const kerb = createBikes({ graph, ground: () => 1.2, seed: 5 });
+  const one = kerb.bikes[0].bike;
+  assert.equal(kerb.nearestTo(one.pos[0], one.pos[2]).id, 0, 'a machine at the kerb is offered to a man at the kerb');
+  kerb.step(1 / 30, 0, { throttle: 1 });
+  kerb.step(1 / 30);
+  assert.ok(kerb.right(0), 'and it can be picked up by the id the frame loop is holding');
+  kerb.dispose();
+  planes.dispose();
+  bikes.dispose();
 });
