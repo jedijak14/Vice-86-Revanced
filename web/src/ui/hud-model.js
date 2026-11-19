@@ -160,6 +160,8 @@ export function createHudModel() {
     race: '',            // the race in hand: where in it you are
     mission: '',         // the job in hand: what to do next
     crew: '',            // who else is in this room
+    purse: '',           // what is in the pocket: the cash, and what it came from
+    foot: '',            // on foot: the gun in hand, the wind, what is nearest
   };
 }
 
@@ -181,9 +183,14 @@ function policeLine(pd) {
 function raceLine(race) {
   if (!race || !race.active) return '';
   if (race.countdown > 0) return `starting in ${Math.ceil(race.countdown)}`;
-  if (race.finished) return `${race.place ? `P${race.place}` : 'finished'} · ${formatLap(race.lastMs)}`;
+  // The money rides on the line: what is lying there during it, and what the result took after it.
+  if (race.finished) {
+    const took = race.payout ? ` · ${dollars(race.payout)}` : '';
+    return `${race.place ? `P${race.place}` : 'finished'} · ${formatLap(race.lastMs)}${took}`;
+  }
   const left = Math.max(0, (race.total | 0) - (race.passed | 0));
-  return `${race.name || 'Street race'} · ${left} to go · ${formatLap(race.elapsedMs)}`;
+  const purse = race.purse ? ` · ${dollars(race.purse)}` : '';
+  return `${race.name || 'Street race'} · ${left} to go · ${formatLap(race.elapsedMs)}${purse}`;
 }
 
 /** The job line: what the next objective asks for, in the mission's own words. */
@@ -192,6 +199,34 @@ function missionLine(mission) {
   if (mission.offered && mission.offered.length) return `Jobs · ${mission.offered.length} to take at the kerb`;
   if (!mission.active || !mission.objective) return '';
   return mission.objective;
+}
+
+/**
+ * The pocket: what is in it, and — only when something changed — where it came from. A number that moves
+ * on its own is the thing a player wants to see after a job, so the delta rides along for a few seconds.
+ */
+/** Bills with thousands commas, the way the money is counted out; `value` is in dollars. */
+const dollars = (value) => `$${Math.round(Math.abs(value)).toLocaleString('en-US')}`;
+
+function purseLine(purse) {
+  if (!purse) return '';
+  const money = dollars(purse.cash);
+  // The purse is always worth reading — it is the score of the street's other economy — and a change in it
+  // is worth saying out loud for a while, because a number that moved without a reason looks like a bug.
+  if (!purse.lastDelta) return purse.cash > 0 ? money : `${money} \u00b7 nothing to spend`;
+  const ago = purse.lastAt === null || purse.lastAt === undefined ? 0 : purse.lastAt;
+  const sign = purse.lastDelta > 0 ? '+' : '\u2212';
+  return `${money} \u00b7 ${sign}${dollars(purse.lastDelta)}${ago > 0 && ago < 6 ? ` \u00b7 ${Math.round(6 - ago)}s` : ''}`;
+}
+
+/** The walker's own line: what is in the hand, and how much of him is left. */
+function footLine(foot) {
+  if (!foot || !foot.onFoot) return '';
+  const gun = foot.gun ? `${foot.gun} ${foot.magazine}/${foot.reserve}` : 'no gun \u00b7 B to draw';
+  const wind = foot.out ? ' \u00b7 winded' : foot.stamina < 0.34 ? ' \u00b7 low wind' : '';
+  const near = foot.boarding ? ' \u00b7 F to get in' : (foot.near ? ' \u00b7 F to get out' : '');
+  const door = foot.door ? ` \u00b7 ${foot.door}` : '';
+  return `${gun}${wind}${near}${door}`;
 }
 
 function crewLine(net) {
@@ -256,6 +291,8 @@ export function updateHudModel(model, input, units, now) {
   model.race = raceLine(input.race);
   model.mission = missionLine(input.mission);
   model.crew = crewLine(input.net);
+  model.purse = purseLine(input.purse);
+  model.foot = footLine(input.foot);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

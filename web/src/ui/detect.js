@@ -213,8 +213,15 @@ export const RULES = Object.freeze([
 export function readEnvironment() {
   const nav = globalThis.navigator || {};
   const scr = globalThis.screen || {};
+  const ua = typeof nav.userAgent === 'string' ? nav.userAgent : '';
+  const platform = typeof nav.platform === 'string' ? nav.platform : '';
+  const touchPoints = typeof nav.maxTouchPoints === 'number' ? nav.maxTouchPoints : 0;
   return {
     deviceMemory: typeof nav.deviceMemory === 'number' ? nav.deviceMemory : undefined,
+    // Safari implements no `deviceMemory` at all, so on an iPad the number is missing rather than large.
+    // iPadOS also reports itself as a Macintosh, which is why the touch points are the tell (the same test
+    // every iOS browser check uses): a Mac with a touchscreen is not a thing Safari can pretend to be.
+    ios: /iPad|iPhone|iPod/.test(ua) || (platform === 'MacIntel' && touchPoints > 1),
     hardwareConcurrency: typeof nav.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : undefined,
     screenWidth: typeof scr.width === 'number' ? scr.width : undefined,
     screenHeight: typeof scr.height === 'number' ? scr.height : undefined,
@@ -288,8 +295,8 @@ export function classifyRenderer(raw) {
 
 // ---------------------------------------------------------------- detection
 
-/** Score a preset needs on a 1080p screen. Low needs nothing. */
-export const PRESET_MIN_SCORE = Object.freeze({ low: 0, medium: 5, high: 14, ultra: 27 });
+/** Score a preset needs on a 1080p screen. Ultra Low needs nothing: it is the floor Auto can fall to. */
+export const PRESET_MIN_SCORE = Object.freeze({ ultraLow: 0, low: 3, medium: 5, high: 14, ultra: 27 });
 
 const REFERENCE_PIXELS = 1920 * 1080;
 const rank = (preset) => PRESET_NAMES.indexOf(preset);
@@ -345,16 +352,16 @@ export function describeGraphics(caps, env = readEnvironment()) {
     // No usable string (blocked by privacy settings, or a GPU the table has never seen).
     const hint = caps && isPresetName(caps.tierHint) ? caps.tierHint : null;
     const strongHost = !env.touch && env.hardwareConcurrency >= 8 && !(env.deviceMemory < 8);
-    preset = hint || (strongHost ? FALLBACK_PRESET : 'low');
+    preset = hint || (strongHost ? FALLBACK_PRESET : 'ultraLow');
     reasons.push(renderer ? 'Unrecognised graphics device; starting cautiously.' : 'The browser does not reveal the graphics device; starting cautiously.');
   } else {
-    preset = 'low';
+    preset = 'ultraLow';
     for (const name of PRESET_NAMES) {
       if (score >= PRESET_MIN_SCORE[name] * pixelLoad(name, env)) preset = name;
     }
     if (family === 'software') {
-      ceiling = 'low';
-      reasons.push('Software rendering: hardware acceleration is off or unavailable in this browser.');
+      ceiling = 'ultraLow';
+      reasons.push('Software rendering: hardware acceleration is off or unavailable in this browser, so Auto will not go above Ultra Low.');
     } else if (family === 'mobile') {
       ceiling = 'medium';
       reasons.push('Phone or tablet graphics.');
@@ -370,25 +377,43 @@ export function describeGraphics(caps, env = readEnvironment()) {
   }
 
   // Memory and cores bound what the rest of the game (streaming, traffic, physics) can keep up with.
-  if (env.deviceMemory <= 2) { ceiling = lower(ceiling, 'low'); reasons.push('2 GB of memory or less limits Auto to Low.'); }
+  if (env.deviceMemory <= 2) { ceiling = lower(ceiling, 'ultraLow'); reasons.push('2 GB of memory or less limits Auto to Ultra Low.'); }
   else if (env.deviceMemory <= 4) { ceiling = lower(ceiling, 'medium'); reasons.push('4 GB of memory limits Auto to Medium.'); }
-  if (env.hardwareConcurrency <= 2) { ceiling = lower(ceiling, 'low'); reasons.push('Two processor cores or fewer limit Auto to Low.'); }
+  if (env.hardwareConcurrency <= 2) { ceiling = lower(ceiling, 'ultraLow'); reasons.push('Two processor cores or fewer limit Auto to Ultra Low.'); }
   else if (env.hardwareConcurrency <= 4) { ceiling = lower(ceiling, 'high'); reasons.push('Four processor cores limit Auto to High.'); }
 
   preset = lower(preset, ceiling);
-  return { preset, ceiling, family, score, renderer, label, reasons };
+  // Memory of its own, apart from how fast the machine is. A 3 GB iPad shares those bytes with the OS, the
+  // tab and the picture, and what fills them first is the big buffers: the sign atlas, the render targets,
+  // the tiles of city held around the car. Those are what `lowMemory` shrinks (render/quality.js and
+  // world/index.js), and shrinking them costs a little sharpness rather than a lot of the street.
+  // An iPad or iPhone that reports no memory is treated as small, because the ones that need this most and
+  // the ones that do not differ by 8 GB and the browser will not say which is which; a desktop that reports
+  // nothing is left alone, since a desktop with 16 GB and a hidden number is the common case.
+  const lowMemory = (env.deviceMemory !== undefined ? env.deviceMemory <= 4 : env.ios === true)
+    || family === 'software';
+  if (lowMemory) {
+    reasons.push(env.deviceMemory !== undefined
+      ? `${env.deviceMemory} GB of memory: the city is held in a small-memory budget.`
+      : 'An iOS device that will not say its memory: held in a small-memory budget.');
+  }
+  // A device without 32-bit float render targets is not a broken device — the renderer builds the frame in
+  // 16-bit float on it (render/gl.js). The note is here because on an older iPad that line is the proof that
+  // the game noticed and coped, rather than the person having to read a console.
+  if (caps && caps.floatSupport === 'half') reasons.push('HDR is drawn in 16-bit float: this device has no 32-bit float render targets, and the renderer works around it.');
+  return { preset, ceiling, family, score, renderer, label, reasons, lowMemory };
 }
 
 /** Preset by score alone, ignoring the screen. */
 function stepPresetByScore(score) {
-  let preset = 'low';
+  let preset = 'ultraLow';
   for (const name of PRESET_NAMES) if (score >= PRESET_MIN_SCORE[name]) preset = name;
   return preset;
 }
 
 let lastDetected = FALLBACK_PRESET;
 
-/** Starting preset for Auto on this device: 'low' | 'medium' | 'high' | 'ultra'. */
+/** Starting preset for Auto on this device: one of PRESET_NAMES, weakest first from 'ultraLow'. */
 export function detectGraphics(caps, env = readEnvironment()) {
   lastDetected = describeGraphics(caps, env).preset;
   return lastDetected;

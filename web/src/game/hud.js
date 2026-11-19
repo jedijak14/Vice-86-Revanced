@@ -26,6 +26,8 @@ export function createHudFeed({ ui, world }) {
     race: null,
     mission: null,
     net: null,
+    purse: null,
+    foot: null,
   };
   let districtTimer = 0;
   let metres = MAP_METRES;
@@ -78,6 +80,8 @@ export function createHudFeed({ ui, world }) {
       values.race = (status && status.race) || null;
       values.mission = (status && status.mission) || null;
       values.net = (status && status.net) || null;
+      values.purse = (status && status.purse) || null;
+      values.foot = (status && status.foot) || null;
       districtTimer -= dt;
       if (districtTimer <= 0) {
         districtTimer = DISTRICT_INTERVAL;

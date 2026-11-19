@@ -34,7 +34,10 @@ import { LampBuffer } from './lamps.js';
 import { createPlayer } from './player.js';
 import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
-import { createCrowd, ARTICULATE_CAP } from './crowd.js';
+import { createCrowd, PEOPLE_BY_TIER } from './crowd.js';
+import { createFoot } from './foot.js';
+import { createWeapon, WITNESS_RADIUS } from './weapons.js';
+import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
 import { createRaces, TIERS as RACE_TIERS } from './races.js';
 import { createEffects } from './effects.js';
@@ -46,6 +49,9 @@ import { createSkidMarks } from './skids.js';
 import { createPhase } from './state.js';
 import { allowedCar, preparePaints, paintOf, rememberPaint, cycleOf, stepCar, cycleDirection, createCarCache } from './garage.js';
 import { createShowroom } from './showroom.js';
+import { createShops } from './shops.js';
+import * as settingsModule from '../ui/settings.js';
+import { createShopRoom } from './shoproom.js';
 import { createGarageRig } from './garageRig.js';
 
 /** Height of the land (design/ARCHITECTURE.md, coordinate conventions). */
@@ -63,6 +69,10 @@ const SURROUNDINGS_INTERVAL = 0.25; // s between samples of what is around the c
 const DRY_GRIP = 1, WET_GRIP = 0.8;
 const HEADLAMP_LABELS = { auto: 'Headlamps: automatic', on: 'Headlamps: on', off: 'Headlamps: off' };
 const TITLE_INPUT = Object.freeze({ throttle: 0, brake: 0, steer: 0, handbrake: 1 });
+/** Afoot, the car is left exactly as its driver left it: no throttle, no steering, handbrake up. */
+const PARKED_INPUT = TITLE_INPUT;
+/** Metres under the street's own level that a walker is in the sea rather than on the shore. */
+const DEEP_WATER = 1.2;
 // The garage's detail by graphics preset (design/GARAGE.md, The set); High and beyond get the full set.
 const GARAGE_DETAIL = Object.freeze({ low: 0, medium: 1 });
 const GARAGE_FULL_DETAIL = 2;
@@ -149,18 +159,48 @@ export function createGame(deps) {
   let redLaneId = -1, redAt = -1;
   const approach = [0, 0, 0];
   const crowd = createCrowd({
-    graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y,
+    graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y, quality: settings.graphics.preset,
     // A person driven at off the kerb is an offence, and the only witness is the crowd itself.
     onEndanger: (k) => {
       if (wanted.add('peds scattered', k > 0.8 ? 1 : 0.5)) toast('A pedestrian was struck out of the way');
     },
   });
+  // The people themselves are a download: five rigged bodies and one shared clip library, vendored into
+  // web/assets/models by tools/vendor_models.py. Asked for here, after the renderer and the world are up,
+  // so the loading screen does not wait on three megabytes of models nobody has looked at yet -- and the
+  // street says so out loud when they do not arrive, rather than quietly emptying the pavements.
+  const castRequest = (async () => {
+    const castModule = await import('../world/people/cast.js');
+    const decode = typeof self !== 'undefined' && typeof self.createImageBitmap === 'function'
+      ? async (bytes) => {
+        const bitmap = await self.createImageBitmap(new self.Blob([bytes], { type: 'image/png' }));
+        const surface = document.createElement('canvas');
+        surface.width = bitmap.width; surface.height = bitmap.height;
+        const ctx2d = surface.getContext('2d', { willReadFrequently: true });
+        ctx2d.drawImage(bitmap, 0, 0);
+        const pixels = ctx2d.getImageData(0, 0, bitmap.width, bitmap.height);
+        if (bitmap.close) bitmap.close();
+        return { width: pixels.width, height: pixels.height, data: pixels.data };
+      }
+      : null;
+    return castModule.loadCast({
+      fetchFile: (rel) => fetch(rel).then((r) => { if (!r.ok) throw new Error(`${rel}: ${r.status}`); return r.arrayBuffer(); }),
+      decodeImage: decode || null,
+    });
+  })().then((cast) => { if (cast) crowd.setCast(cast); footCast = cast; if (onFoot) foot.attach(cast, renderer); return cast; })
+    .catch((error) => {
+      console.error('The street could not load its people: the pavements will be empty.', error);
+      crowd.castError = String((error && error.message) || error);
+      return null;
+    });
   // Street races (game/races.js): a route laid on the same lane graph the traffic drives, timed by
   // gates across the road. `raceKey` is what the nearest one asks for, and it is what the HUD and the
   // touch overlay both read, so a phone and a keyboard see the same opportunity.
   const races = createRaces({
     graph, renderer, traffic, seed: ((seed | 0) ^ 0x9a37) >>> 0, land: LAND_Y,
     notify: (text) => toast(text),
+    // The purse is sized on the hour the street is standing at, so the small hours pay more (races.js).
+    hour: () => clock.timeOfDay,
   });
   let raceNear = null, raceSaid = '', raceTimer = 0;
   // A crash the player caused: physics knows the contact, and the ledger keeps the score. Reported
@@ -181,10 +221,168 @@ export function createGame(deps) {
       }
     });
   }
+  // ---- On foot ------------------------------------------------------------------------------
+  // The street is built around a car, so a man on the pavement is a guest in it. game/foot.js owns his
+  // body and game/weapons.js his gun; what is kept here is the handover — whose input he answers to, where
+  // the camera goes when he leaves the car, and what the police hear when the gun speaks.
+  const foot = createFoot({
+    physics, land: LAND_Y, crowd,
+    onLand: (y, hard) => {
+      if (!hard) return;
+      camera.addTrauma(0.22);
+      toast('You landed hard');
+    },
+  });
+  /** The cast, when it arrives. The walker borrows a body off the crowd's own shelf, so it costs no upload. */
+  let footCast = null;
+  const gun = createWeapon({
+    physics, crowd,
+    // A discharged firearm is a witness event rather than a vehicle event: the crowd flinches at the
+    // muzzle, whoever was struck goes down on the pavement, and the ledger is told what it heard. What the
+    // dispatch does about it is the dispatch's business, which is exactly why none of it is decided here.
+    onShot: ({ origin, struck }) => {
+      const seen = crowd.frighten(origin[0], origin[2], WITNESS_RADIUS, 1);
+      if (wanted.add('shots fired', struck.length ? 2.2 : 1.5)) {
+        toast(seen > 2 ? `Shots fired \u00b7 ${seen} witnesses \u00b7 ${WantedLedger.label(wanted.stars)}` : 'Shots fired');
+      }
+    },
+    onHit: (info) => {
+      if (!info.person) return;
+      crowd.strike(info.person, { seconds: 30 });
+      if (wanted.add('person shot')) toast('You struck somebody on the street');
+    },
+  });
+  // The purse is the street's other score: what a race paid, what a till took, and what is left to spend.
+  // It keeps itself in localStorage, which is also the only reason a saved game has a wallet at all.
+  const purse = createPurse({
+    storage: typeof self !== 'undefined' && self.localStorage ? self.localStorage : null,
+    startingCash: 40,
+  });
+  purse.load();
+  let onFoot = false, footFirst = false, purseCash = purse.cash, purseAge = 99, purseDelta = 0;
+  /** Where the last dry pavement was: the sea is a wall you can walk into and be sent back from. */
+  const drySpot = [0, LAND_Y, 0];
+  const footIntent = { forward: 0, strafe: 0, run: 0, crouch: 0, turn: 0, pitch: 0 };
+  const footEye = [0, 0, 0], footAim = [0, 0, 0], footCam = [0, 0, 0];
+  const footLook = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  /** The walker as the camera's subject: 'free' wants a pose and a speed, and this is cheaper than a lie. */
+  const footSubject = {
+    pos: foot.pos, quat: [0, 0, 0, 1], yaw: 0, vel: foot.vel, forwardSpeed: 0, yawRate: 0,
+    lookBack: false, roughness: 0, bonnet: null, length: 0.5, height: 1.8, boost: 0,
+  };
+
+  /** Out of the car, at the door side, on the ground beside it, looking along the street. */
+  function stepOut() {
+    const p = player.pos, yaw = player.vehicle ? player.vehicle.yaw : 0;
+    // 1.35 m of door, shoulder and mirror along the car's own right, which is the side that faces the
+    // pavement in a country that drives on the right. A man put down at the centre of the car is a man
+    // standing in the engine, and the world's first ray is the car's own body.
+    foot.place(p[0] + Math.cos(yaw) * 1.35, p[1] + 0.05, p[2] - Math.sin(yaw) * 1.35, yaw);
+    foot.look.yaw = yaw; foot.look.pitch = -0.05;
+    foot.stamina = 1;
+    foot.attach(footCast, renderer);
+    drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
+    onFoot = true;
+    input.looking = true;                 // the picture is his neck now, not the turntable's
+    camera.setMode('free');
+    camera.snap();
+    gun.equip('pistol');                  // there is a short .38 under the driver's seat, as there was in 1986
+    toast('On foot \u00b7 Space to fire, B to draw or stow, R to reload, F back in');
+  }
+
+  /** Back into the car: the body goes where it came from and the camera goes back to the chase rig. */
+  function climbIn() {
+    // A shop is left by its own door. The car can be parked on the pavement outside it, and a man who
+    // reached for the door handle from behind the counter would leave the room without going through it.
+    if (inShop) { toast('Out of the shop first'); return; }
+    if (!foot.near) { toast('The car is too far off to get into'); return; }
+    onFoot = false;
+    foot.letGo();
+    input.looking = false;
+    camera.setMode('chase');
+    camera.snap();
+    gun.stow();
+    toast('In');
+  }
+
+  // ---- shops ----------------------------------------------------------------------------------------------
+  // A door on the pavement is a place, not a menu. game/shops.js decides what the door means at this hour and
+  // what a till gives up; game/shoproom.js puts a room with its own lamps behind it while a man is standing in
+  // there. Neither of them knows the renderer or the street, which is why both are tested in node and the
+  // wiring under this comment is not.
+  const shopRoom = createShopRoom({ renderer });
+  const shops = createShops({
+    purse, wanted, crowd, gun,
+    plan, field: typeof world.field === 'function' ? world.field : null,
+    toast: (text) => toast(text),
+    // Both ways through the door go behind a fade, the way the garage does: a room appearing around a man
+    // mid-stride is a cut, and a cut is rude without being announced.
+    onEnter: (shop) => fadeThrough(() => shopIn(shop)),
+    onExit: () => fadeThrough(() => shopOut()),
+    // A bell nobody can hear is not an alarm: what the street does about a hold-up is the crowd flinching at
+    // the door and the ledger's stars, both of which shops.js has already spent its words on.
+    onAlarm: (shop) => { if (crowd) crowd.frighten(shop.x, shop.z, 26, 1); },
+  });
+  let inShop = false, shopSaid = '', shopNear = null, shopTimer = 0;
+  /** Where the man is, in the frame the room measures the counter in. Refilled every time it is asked for. */
+  const shopAt = { x: 0, z: 0, hour: 12 };
+
+  /** Where he stands, as the shop sees it: the room's own numbers inside, the street's outside. */
+  function shopsAt() {
+    if (inShop && shopRoom.set) {
+      const p = shopRoom.set.toRoom(foot.pos[0], foot.pos[2]);
+      shopAt.x = p[0]; shopAt.z = p[1];
+    } else { shopAt.x = foot.pos[0]; shopAt.z = foot.pos[2]; }
+    shopAt.hour = clock.timeOfDay;
+    return shopAt;
+  }
+
+  /** In through the door: the street stops being the frame and the room becomes it. */
+  function shopIn(shop) {
+    if (!shopRoom.enter(shop, LAND_Y)) { toast('There was nothing behind that door'); return; }
+    inShop = true;
+    clock.interior = true;                       // the street's hour, weather and thunder wait outside
+    const a = shopRoom.set.anchors;
+    foot.place(a.entry[0], a.entry[1] + 0.05, a.entry[2], (shop.yaw || 0) + Math.PI);
+    foot.look.yaw = (shop.yaw || 0) + Math.PI; foot.look.pitch = -0.02;
+    frame.room = shopRoom.room;
+    frame.reflectionOrigin[0] = shopRoom.probe[0];
+    frame.reflectionOrigin[1] = shopRoom.probe[1];
+    frame.reflectionOrigin[2] = shopRoom.probe[2];
+    input.looking = true;
+    camera.setMode('free');
+    camera.snap();
+    shopSaid = '';
+    toast(`${shop.name} \u00b7 the counter is in front of you`);
+  }
+
+  /** Out again, with whatever the visit cost or earned. */
+  function shopOut() {
+    const at = shopRoom.doorstep([0, 0, 0]);
+    inShop = false;
+    clock.interior = false;
+    shopRoom.leave();
+    frame.room = null;
+    if (at) foot.place(at[0], at[1] + 0.05, at[2], foot.yaw);
+    camera.snap();
+    shopSaid = ''; shopNear = null;
+  }
+
+  /** The trigger, from a man's eye rather than a camera: it is the eye that aims a gun, not the feet. */
+  function pullTrigger(dt) {
+    if (!gun.armed) return false;
+    foot.eye(footEye);
+    footLook.x = footEye[0]; footLook.y = footEye[1]; footLook.z = footEye[2];
+    footLook.yaw = foot.look.yaw; footLook.pitch = foot.look.pitch;
+    const fired = gun.fire(footLook, dt, Math.min(1, foot.moving / 4.4));
+    if (fired && foot.person) foot.person.role('shoot', { once: true, upper: true });
+    return !!fired;
+  }
+
   /** One object for the HUD, so that the street's news arrives in one place each frame. */
   const hudStatus = { police: null, wanted: null, race: null, mission: null, net: null };
   /** Where the crowd should look for a car to react to: filled from the player every frame. */
-  const crowdAt = { x: 0, y: LAND_Y, z: 0, yaw: 0, speed: 0 };
+  const crowdAt = { x: 0, y: LAND_Y, z: 0, yaw: 0, speed: 0, hour: 12 };
   /** The car, as the crowd and the races want it: [x, z] for the plan's sampler. */
   const playerPos2 = [0, 0];
   const effects = createEffects({ physics, audio, camera, input, settings });
@@ -233,6 +431,10 @@ export function createGame(deps) {
   let surroundingsTimer = 0;
   let hornOn = false;
   let physicsMs = 0, gameMs = 0, streetSeconds = 0;
+  // What the frame loop was actually handed, kept for `stats()`: a soak on a software renderer measures the
+  // machine as much as the game, and the only way to tell "the walker is slow" from "this page got six frames
+  // a minute" is to report the clock each subsystem was given. See `frames`, `pacedDt`, `realMs` below.
+  let frameCount = 0, lastPacedDt = 0, lastRealDt = 0, lastSimDt = 0;
   let cameraDistance = 6;
   let wasMeasuring = tuner ? tuner.measuring : false;
   // Changing the car: the id asked for last, and the promise of the change in progress.
@@ -468,6 +670,9 @@ export function createGame(deps) {
   }
 
   function applySettings() {
+    // The memory budget is re-derived here rather than remembered, so the settings panel's choice takes
+    // effect the moment it is changed (and a device the auto-tuner has since classified is honoured).
+    settingsModule.applyMemoryMode(settings, settings.graphics.memoryDetected);
     const g = effectiveGraphics();
     const signature = JSON.stringify(g);
     if (signature !== graphicsSignature) {
@@ -479,7 +684,12 @@ export function createGame(deps) {
     traffic.setDensity(trafficDensity);
     // People come with the street the player asked for, and limbs come with the graphics preset:
     // a person with arms is seven draw calls, and a slow machine needs them elsewhere.
-    crowd.setDensity(trafficDensity, ARTICULATE_CAP[settings.graphics.preset] ?? 4);
+    // People come with the street the player asked for, and how many of them may be animated comes with
+    // the graphics preset: a body is a rig solved and a vertex buffer rewritten every frame, and a slow
+    // machine needs that work elsewhere. Ultra Low still gets two, because a street with nobody on it is
+    // a car park rather than a neighbourhood.
+    crowd.setDensity(trafficDensity, PEOPLE_BY_TIER[settings.graphics.preset] ?? 5);
+    crowd.setQuality(settings.graphics.preset);
     input.sensitivity = settings.controls.steerSensitivity || 1;
     if (phase.name === 'driving' || phase.name === 'paused') clock.timeFlow = settings.game.timeFlow;
     clock.reduceFlashing = Boolean(settings.game.reduceFlashing);
@@ -613,19 +823,23 @@ export function createGame(deps) {
     if (action) action();
   }
 
-  function advanceTransition(dt) {
+  /**
+   * Ages the scene change. `dt` is kept for anything that must agree with the simulation; both the fades and
+   * the dark hold are wall-paced, because they are a duration a person waits, not a distance the street travels.
+   */
+  function advanceTransition(dt, realDt = dt) {
     if (transition.stage === 'out') {
-      frame.fade = Math.min(1, frame.fade + dt / FADE_OUT_SECONDS);
+      frame.fade = Math.min(1, frame.fade + realDt / FADE_OUT_SECONDS);
       if (frame.fade >= 1 && (!transition.ready || transition.ready())) runTransitionAction();
     } else if (transition.stage === 'hold') {
       frame.fade = 1;
-      transition.held += dt;
+      transition.held += realDt;
       transition.frames++;
       // The garage shows nothing of the street: it need not wait for the tiles it keeps warm.
       const loaded = phase.name === 'garage' || world.isReady(player.pos, NEAR_RADIUS) || transition.held > HOLD_MAX_SECONDS;
       if (loaded && transition.frames > HOLD_MIN_FRAMES && phase.name !== 'boot') transition.stage = 'in';
     } else if (transition.stage === 'in') {
-      frame.fade = Math.max(0, frame.fade - dt / FADE_IN_SECONDS);
+      frame.fade = Math.max(0, frame.fade - realDt / FADE_IN_SECONDS);
       if (frame.fade <= 0) transition.stage = 'none';
     }
   }
@@ -650,9 +864,40 @@ export function createGame(deps) {
   function handlePresses() {
     const driving = phase.name === 'driving' && transition.stage === 'none';
     if (input.consume('pause') && driving) game.pause();
-    if (input.consume('camera') && driving) camera.nextMode();
+    // Out of the car and back into it. Nothing about this is a menu: the door is the door, and the only
+    // condition is that the car is nearly stopped, because a man stepping out of one at 40 m/s is a
+    // casualty rather than a pedestrian.
+    if (input.consume('foot') && driving) {
+      if (onFoot) climbIn();
+      else if (Math.abs(player.forwardSpeed || 0) < 2.2) stepOut();
+      else toast('Stop the car first');
+    }
+    // A door: the shopfront's from the pavement, and the same key is the only way out of the room.
+    if (input.consume('shop') && driving) {
+      if (inShop) shops.leave();
+      else if (!onFoot) toast('A shop is walked into, not driven into');
+      else {
+        const near = shops.nearest(foot.pos[0], foot.pos[2], 7);
+        if (near) shops.press(near, shopsAt());
+        else toast('No shopfront within reach');
+      }
+    }
+    if (input.consume('weapon') && driving) {
+      if (!onFoot) toast('Guns are for the pavement');
+      else if (gun.id) { gun.stow(); toast('Stowed'); }
+      else { gun.equip('pistol'); toast('The .38 is in your hand'); }
+    }
+    if (input.consume('camera') && driving) {
+      if (onFoot) { footFirst = !footFirst; camera.snap(); }
+      else camera.nextMode();
+    }
     if (input.consume('headlamps') && driving) toast(HEADLAMP_LABELS[player.cycleHeadlamps()]);
-    if (input.consume('recover') && phase.name === 'driving') { recoverToRoad(); toast('Back on the road'); }
+    if (input.consume('recover') && phase.name === 'driving') {
+      // The same key means two things, because a man on the pavement has nothing to recover: the car is
+      // where he left it. R is the natural key for a magazine, and the street has no other use for it.
+      if (onFoot) { if (gun.startReload() && foot.person) foot.person.role('reload', { once: true, upper: true }); }
+      else { recoverToRoad(); toast('Back on the road'); }
+    }
     if (input.consume('time') && driving) {
       const name = clock.nextTimePreset();
       toast(TIME_LABELS[name] || name);
@@ -764,6 +1009,10 @@ export function createGame(deps) {
     get police() { return police ? police.snapshot() : null; },
     /** The street's own population, and what the agency has written down against you. */
     get crowd() { return crowd.snapshot(); },
+    /** Bodies and triangles the crowd put in front of the camera on the last drawn frame. */
+    get crowdRender() { return crowd.renderStats(); },
+    /** The vendored people: whether they arrived, and what they weigh. `pending` means still fetching. */
+    get people() { return { state: crowd.castReady ? 'ready' : (crowd.castError ? 'failed' : 'pending'), error: crowd.castError || null }; },
     get wanted() { return wanted.snapshot(); },
     /** The crowd, for a script that wants somebody on a particular corner (see game/missions.js). */
     hailAt(x, z) { return crowd.makeHailer(x, z) ? crowd.snapshot() : null; },
@@ -968,6 +1217,68 @@ export function createGame(deps) {
       input.inject(actions);
     },
 
+    /**
+     * A one-shot action from script, exactly as a key would send it: 'foot' to step out of the car,
+     * 'weapon' to draw, 'recover' to reload afoot. For the automation harness, and for nothing else.
+     */
+    press(action) {
+      input.press(action);
+      return true;
+    },
+
+    /**
+     * The nearest door, in the terms a script needs to reach it: the shopfront's world position, what the
+     * counter would offer there right now, and whether a room is up. `x, z` override where he stands.
+     */
+    shopInfo(x, z) {
+      const at = x !== undefined && z !== undefined ? [x, 0, z] : (onFoot ? foot.pos : player.pos);
+      const shop = shops.nearest(at[0], at[2], 60);
+      const offer = shop ? shops.offer(shop, { x: at[0], z: at[2], hour: clock.timeOfDay }) : null;
+      const s = shops.snapshot();
+      return {
+        count: shops.count, name: shop ? shop.name : null, kind: shop ? shop.kind : null,
+        x: shop ? shop.x : null, z: shop ? shop.z : null, hours: shop ? shop.hours : null,
+        till: shop ? shop.till : 0, action: offer ? offer.action : null, label: offer ? offer.label : null,
+        hour: clock.timeOfDay, onFoot, inside: s.inside, holding: s.holding, progress: s.progress,
+        room: shopRoom.ready, lights: shopRoom.room ? 1 : 0,
+      };
+    },
+
+    /** Puts the walker's feet somewhere else: a script checking a doorway should not have to drive to it. */
+    walkTo(x, z) {
+      if (!onFoot || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+      foot.place(x, LAND_Y + 0.05, z, foot.yaw);
+      camera.snap();
+      return true;
+    },
+
+    /**
+     * The closest shopfront on the island, preferring one that is open: for a script (or a person with a map
+     * and no memory) that wants to know where the nearest door is from wherever they are standing, rather
+     * than the offer report, which only sees 60 metres and is meant for the HUD.
+     */
+    nearestShop() {
+      const hour = clock.timeOfDay;
+      let open = null, openD = Infinity, any = null, anyD = Infinity;
+      for (const s of shops.list) {
+        const d = Math.hypot(s.x - player.pos[0], s.z - player.pos[2]);
+        if (d < anyD) { anyD = d; any = s; }
+        if (d < openD && shops.offer(s, { x: s.x, z: s.z, hour }).action === 'enter') { openD = d; open = s; }
+      }
+      const s = open || any;
+      if (!s) return null;
+      return {
+        name: s.name, kind: s.kind, x: s.x, z: s.z, hours: s.hours, till: s.till,
+        metres: Math.round((open ? openD : anyD)), open: !!open, shops: shops.count,
+      };
+    },
+
+    /** Whether the player is on the pavement rather than in the car, and what each of them is doing. */
+    get onFoot() { return onFoot; },
+    footState() { return foot.snapshot(); },
+    gunState() { return gun.snapshot(); },
+    purseState() { return purse.snapshot(); },
+
     teleport(x, z, yaw = 0) {
       if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
       placeCar(x, z, yaw);
@@ -986,6 +1297,19 @@ export function createGame(deps) {
         physicsMs, gameMs, car: carId, traffic: traffic.count, parked: traffic.parkedCount,
         tilesLoaded: w.tilesLoaded || 0, tilesPending: w.tilesPending || 0, workerMs: w.workerMs || 0,
         streetSeconds: Math.round(streetSeconds * 100) / 100,
+        // Frames the game was asked to draw, and the three clocks that came out of them: the pacer's
+        // (suspension- and cap-clamped), the wall's, and what the street was granted. `frames` growing while
+        // `simDt` stays at the pacer's floor is a starving machine; `frames` frozen is a page nobody pumped.
+        frames: frameCount, pacedDt: Math.round(lastPacedDt * 10000) / 10000,
+        realDt: Math.round(lastRealDt * 10000) / 10000, simDt: Math.round(lastSimDt * 10000) / 10000,
+        onFoot, cash: Math.round(purse.cash * 100) / 100,
+        foot: onFoot ? foot.snapshot() : null, gun: gun.snapshot(),
+        // A script that presses a key wants to know whether the game was listening: a fade swallows a
+        // press, and a soak harness that cannot see the difference blames the walker for being slow.
+        transition: transition.stage, frameFade: Math.round(frame.fade * 100) / 100,
+        transitionHeld: Math.round(transition.held * 100) / 100, transitionBusy: !!transition.action,
+        inShop, shop: inShop ? shops.snapshot() : (shopNear ? { inside: shopNear.name, holding: false } : null),
+        lowMemory: settings.graphics.lowMemory === true, atlas: null,
       });
     },
 
@@ -1006,10 +1330,19 @@ export function createGame(deps) {
      */
     frame(dt, frameMs = dt * 1000) {
       const t0 = now();
+      frameCount++;
       handlePresses();
+      // The pacer hands a slow machine a fraction of a second for a second and a half of real time (loop.js,
+      // and every software-renderer soak in this repo's history), so anything measured in *seconds a person
+      // waits* has to be counted in wall seconds: how long the screen stays dark, and how long the fade takes
+      // to cross it. Counted in `dt` instead, a half-second fade is a minute of black on a 5 fps device, which
+      // is the opposite of what a fade is for -- and it is exactly the machine this fork is trying to keep.
+      const realDt = Math.max(dt, (frameMs > 0 ? frameMs : 0) / 1000);
+      lastPacedDt = dt; lastRealDt = realDt;
       advanceDeparture(phase.name === 'garage' ? dt : 0);
-      advanceTransition(dt);
+      advanceTransition(dt, realDt);
       const simDt = phase.running ? dt : 0;
+      lastSimDt = simDt;
       const inGarage = phase.name === 'garage';
 
       // Input.
@@ -1018,14 +1351,52 @@ export function createGame(deps) {
       if (phase.name === 'driving') {
         controls = input.state;
         const hands = controls.throttle > 0 || controls.brake > 0 || controls.steer !== 0 || controls.handbrake > 0;
-        if (autopilotOn && !hands) {
+        // The autopilot drives a car, and a man on the pavement is not being driven: taken over here, his
+        // own feet would answer to a route the machine is flying, which is how a walker ends up in the sea.
+        if (autopilotOn && !onFoot && !hands) {
           controls = autopilot.update(simDt, player.vehicle, traffic.sim.time, autoInput);
           if (autopilot.stuck) recoverToRoad();
         }
       }
       // The script's or the player's finger on the nitrous also counts while the autopilot steers.
-      const boost = phase.name === 'driving' ? nitrous.request(input.state.boost, controls.throttle, player.vehicle) : 0;
-      player.drive(controls, boost);
+      const boost = phase.name === 'driving' && !onFoot ? nitrous.request(input.state.boost, controls.throttle, player.vehicle) : 0;
+      if (onFoot) {
+        // The man's own controls, and the car left parked behind him. The wheel is the strafe, the drag on
+        // the picture is the neck, and Shift is the run: nothing here is remapped, because a pedestrian who
+        // had to learn new keys would be a mode rather than the same street with a man in it.
+        player.drive(PARKED_INPUT, 0);
+        footIntent.forward = controls.throttle - controls.brake;
+        footIntent.strafe = -controls.steer;
+        footIntent.run = controls.boost;
+        footIntent.crouch = controls.lookBack;
+        footIntent.turn = simDt > 0 ? input.look.yaw / simDt : 0;
+        footIntent.pitch = simDt > 0 ? input.look.pitch / simDt : 0;
+        foot.step(simDt, footIntent, player.vehicle ? {
+          x: player.pos[0], y: player.pos[1], z: player.pos[2],
+          yaw: player.vehicle.yaw, speed: player.vehicle.speed,
+        } : null);
+        // The trigger is held, not tapped: the gun's own cooldown is what sets the rate, so a held Space
+        // empties a machine pistol and taps a pistol one at a time with the same code.
+        if (controls.handbrake > 0.5) pullTrigger(simDt); else gun.advance(simDt);
+        if (inShop) {
+          // The walls are drawn, and here they are the rule: a room with no colliders of its own would let a
+          // man walk out of a shop and into the sea without ever opening a door.
+          if (shopRoom.confine(foot.pos)) foot.place(foot.pos[0], foot.pos[1], foot.pos[2], foot.yaw);
+          const said = shops.step(simDt, gun.armed && controls.handbrake > 0.5);
+          if (said) toast(said);
+          const offer = shops.offer(shops.inside, shopsAt());
+          shopSaid = offer ? `${offer.label} \u00b7 E` : '';
+        } else if (typeof world.field === 'function' && foot.pos[1] < LAND_Y - DEEP_WATER
+            && world.field(foot.pos[0], foot.pos[2]).kind === 'water') {
+          // No swimming this week, and no drowning either: the shore puts him back where it found him dry.
+          foot.place(drySpot[0], drySpot[1], drySpot[2], foot.yaw);
+          toast('Too deep. You came back out');
+        } else if (foot.grounded && foot.pos[1] > LAND_Y - 0.4) {
+          drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
+        }
+      } else {
+        player.drive(controls, boost);
+      }
 
       // Simulation.
       const steps = simDt > 0 ? stepper.advance(simDt) : 0;
@@ -1068,11 +1439,23 @@ export function createGame(deps) {
         camera.place(rigOut.position, rigOut.target, rigOut.fov);
         if (rigOut.cut) camera.snap();
         frame.focus.distance = rigOut.focusDistance; frame.focus.aperture = rigOut.aperture;
+      } else if (onFoot) {
+        // The room the man is standing in has no hour of its own, so the street keeps its weather; what the
+        // camera does is his: over the shoulder, or the eye itself when he wants it close.
+        player.update(simDt, env.sunElevation, weather.rain, cameraDistance, weather.fog);
+        footSubject.yaw = foot.yaw; footSubject.forwardSpeed = foot.moving;
+        foot.eye(footEye);
+        if (footFirst) {
+          foot.aim(footAim);
+          camera.place(footEye, [footEye[0] + footAim[0] * 10, footEye[1] + footAim[1] * 10, footEye[2] + footAim[2] * 10], 1.15);
+        } else {
+          camera.place(foot.camera(footCam), footEye, 1.05);
+        }
       } else {
         player.update(simDt, env.sunElevation, weather.rain, cameraDistance, weather.fog);
       }
       refreshSubject();
-      camera.update(simDt, subject);
+      camera.update(simDt, onFoot ? footSubject : subject);
       cameraDistance = Math.hypot(camera.position[0] - shown[0], camera.position[1] - shown[1], camera.position[2] - shown[2]);
       if (player.vehicle.inWater && phase.name === 'driving') {
         waterTime += simDt;
@@ -1090,6 +1473,11 @@ export function createGame(deps) {
       } else {
         // The dispatch works on the street while the player is driving: no policing the title
         // scene, the room, or a frame that is not moving.
+        if (inShop) {
+          // The room's lamps, after the man's own: the same budget the garage's room is lit on, because it is
+          // the same kind of frame — a closed room the street is not asked to draw.
+          shopRoom.writeLights(lamps, renderer.interiorLightBudget);
+        }
         if (police) police.enabled = phase.name === 'driving';
         crowd.enabled = phase.name === 'driving';
         // A race's clock is the one thing that must not run while the game is paused, and a car put back
@@ -1098,10 +1486,20 @@ export function createGame(deps) {
         traffic.setFocus(player, camera);
         traffic.update(simDt, env.sunElevation, weather.rain, stepTime);
         // What the street is doing: the crowd walks, and the stars follow what the police saw.
-        crowdAt.x = player.pos[0]; crowdAt.y = player.pos[1]; crowdAt.z = player.pos[2];
+        if (onFoot) {
+          // A man on the pavement is what the crowd has to react to now: the threat a standing car poses
+          // is nothing, and the one a gun poses is handled by the shot itself, not by this.
+          crowdAt.x = foot.pos[0]; crowdAt.y = foot.pos[1]; crowdAt.z = foot.pos[2];
+          crowdAt.yaw = foot.yaw; crowdAt.speed = foot.moving;
+        } else {
+          crowdAt.x = player.pos[0]; crowdAt.y = player.pos[1]; crowdAt.z = player.pos[2];
+        }
         playerPos2[0] = player.pos[0]; playerPos2[1] = player.pos[2];
         crowdAt.yaw = player.vehicle ? player.vehicle.yaw : crowdAt.yaw;
         crowdAt.speed = Math.abs(player.forwardSpeed || 0);
+        // The hour is part of what the street is: the pavement empties after midnight and the kerbs fill
+        // with people wanting a cab, which is the one piece of night that the crowd can show on its own.
+        crowdAt.hour = clock.timeOfDay;
         crowd.step(stepTime, crowdAt, phase.name === 'driving');
         if (police) {
           const heat = police.status.heat | 0;
@@ -1124,20 +1522,49 @@ export function createGame(deps) {
         }
         hudStatus.police = police ? police.status : null;
         hudStatus.wanted = wanted.snapshot();
+        // The purse is aged here rather than in money.js, because only the frame loop knows how long ago
+        // six seconds was; the HUD keeps the change in view for a moment and then says nothing but the sum.
+        if (purse.cash !== purseCash) { purseCash = purse.cash; purseAge = 0; purseDelta = purse.lastDelta; }
+        purseAge += simDt;
+        hudStatus.purse = { cash: purse.cash, lastDelta: purseAge < 6 ? purseDelta : 0, lastAt: purseAge, best: purse.best };
+        hudStatus.foot = onFoot ? {
+          onFoot: true, gun: gun.weapon ? gun.weapon.name : null, magazine: gun.inMagazine, reserve: gun.reserve,
+          state: gun.state, stamina: foot.stamina, out: foot.out, boarding: !!foot.near,
+          door: inShop ? (shopSaid || 'E for the door')
+            : gun.weapon && gun.needReload ? 'R for a magazine'
+              : !onFoot && shopNear ? 'E for the shop' : null,
+        } : (foot.near ? { onFoot: false, boarding: false, door: 'F to get out' } : null);
         races.step(stepTime, playerPos2, phase.name === 'driving');
         hudStatus.race = races.snapshot();
+        // A race pays out of the money that was on the street before the flag, and the pocket is the only
+        // place it can land: the ledger says what it came from, and the toast says how much. `paid` is on
+        // the snapshot, so a finish that scored nothing is still closed off here rather than asked again.
+        if (hudStatus.race.finished && !hudStatus.race.paid) {
+          const won = races.collect();
+          toast(won > 0 ? `The purse is yours · ${formatCash(won)}` : 'No purse · the field took it');
+        }
         // What the street is offering here, once a second: a race is taken from a kerb, not from a menu.
         raceTimer -= stepTime;
         if (raceTimer <= 0 && phase.name === 'driving') {
           raceTimer = 1.1;
           const near = races.state.active ? null : (races.offer(playerPos2[0], playerPos2[1]) || [])[0] || null;
           raceNear = near;
-          const line = near ? `${near.tier.name} · ${Math.round(near.length / 100) / 10} km · press V` : '';
+          const line = near
+            ? `${near.tier.name} · ${Math.round(near.length / 100) / 10} km · ${formatCash(near.purse || 0)} · press V`
+            : '';
           if (line !== raceSaid) {
             raceSaid = line;
             if (line) toast(line);
             ui.touchOffer(near);
           }
+        }
+        // The tills, once a second, and with them what a door is worth right now: a drawer fills through a
+        // trading day and a shut shop is a locked one, and neither of them is a thing to recompute per frame.
+        shopTimer -= stepTime;
+        if (shopTimer <= 0 && phase.name === 'driving') {
+          shopTimer = 1.1;
+          shops.trade(clock.timeOfDay);
+          shopNear = !inShop && onFoot ? shops.nearest(foot.pos[0], foot.pos[2], 7) : null;
         }
         traffic.writeLamps(lamps, camera.position, frame.time);
         if (graph) writeSignalLamps(lamps, graph.junctions, traffic.sim.time, camera.position);
@@ -1207,6 +1634,7 @@ export function createGame(deps) {
     },
 
     dispose() {
+      shopRoom.leave();
       effects.dispose();
       skids.clear();
       traffic.dispose();

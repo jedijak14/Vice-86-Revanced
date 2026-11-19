@@ -797,6 +797,7 @@ export async function createRenderer(canvas, options = {}) {
     addInstances: (description) => scene.addInstances(description),
     remove: (id) => scene.remove(id),
     addDynamic: (description) => scene.addDynamic(description),
+    refreshMesh: (handle, from, to) => scene.refreshMesh(handle, from, to),
 
     /** Static lights and glows of one tile (world-space records, ARCHITECTURE 4.4 / 4.5); null clears. */
     setLights(key, lightRecords, glowRecords) { lights.setStatic(key, lightRecords); glows.set(key, glowRecords, lightRecords); },

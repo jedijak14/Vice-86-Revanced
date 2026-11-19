@@ -12,9 +12,9 @@ export const SETTINGS_VERSION = 1;
 export const STORAGE_KEY = 'vice86.settings';
 
 /** Concrete presets, weakest first. The order is the scale Auto moves along. */
-export const PRESET_NAMES = Object.freeze(['low', 'medium', 'high', 'ultra']);
+export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra']);
 /** Every value the preset selector can show. */
-export const PRESET_CHOICES = Object.freeze(['auto', 'low', 'medium', 'high', 'ultra', 'custom']);
+export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'custom']);
 
 /** Named times of day (ARCHITECTURE section 8). `hours` is passed to actions.setTime as a convenience. */
 export const TIME_OPTIONS = Object.freeze([
@@ -68,7 +68,7 @@ const LOW_TO_ULTRA = ['Low', 'Medium', 'High', 'Ultra'];
 
 const GRAPHICS_FIELDS = [
   choice('preset', 'Preset', [
-    { value: 'auto', label: 'Auto' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
+    { value: 'auto', label: 'Auto' }, { value: 'ultraLow', label: 'Ultra Low' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'custom', label: 'Custom' },
   ], 'auto', 'Auto reads your graphics hardware, picks a starting preset and corrects it once from measured frame times. Changing any option below switches to Custom.'),
 
@@ -76,6 +76,9 @@ const GRAPHICS_FIELDS = [
     'Internal rendering resolution as a share of the display resolution. The largest single lever on frame rate.'),
   toggle('dynamicResolution', 'Dynamic resolution', true,
     'Lowers the internal resolution for a moment when a frame runs long, then restores it.'),
+  choice('memoryMode', 'Memory use', [
+    { value: 'auto', label: 'Auto' }, { value: 'low', label: 'Low' }, { value: 'full', label: 'Full' },
+  ], 'auto', 'How much of the machine\u2019s memory the city is allowed to hold: the picture, the sign texture, the loaded streets and every crowd in them. Low shrinks all of them so a phone or tablet with 3 GB shared between everything can hold the city at once; Auto reads the device and chooses. Nothing about the road is lost, only how sharply it is remembered.'),
   choice('maxPixelRatio', 'Max pixel ratio', [
     { value: 1, label: '1.0' }, { value: 1.25, label: '1.25' }, { value: 1.5, label: '1.5' }, { value: 2, label: '2.0' },
   ], 1, 'Upper limit on device pixels per CSS pixel. Above 1.0 only matters on high-density screens.'),
@@ -160,6 +163,11 @@ export const fieldOf = (section, key) => (FIELD_INDEX[section] ? FIELD_INDEX[sec
  * Concrete value of every performance-related graphics field for each preset (everything except
  * the selector itself and the two picture preferences, which a preset never touches).
  *
+ * Ultra Low is for a machine that is struggling to hold 30: half resolution, no shadows, no
+ * screen-space passes at all, no traffic, and a 30 Hz frame cap so the work the game does is the work
+ * you see rather than frames thrown away. It is a rung *below* Low, not another name for it, and Auto
+ * puts software renderers, 2 GB devices and two-core devices here.
+ *
  * Low is for integrated graphics and phones: reduced resolution, no screen-space passes beyond
  * FXAA and bloom. Medium adds the full lighting model at modest settings. High is the reference
  * look at 1080p on a mid-range desktop card. Ultra spends whatever is left on range and density.
@@ -167,6 +175,12 @@ export const fieldOf = (section, key) => (FIELD_INDEX[section] ? FIELD_INDEX[sec
  * turns something down.
  */
 export const PRESETS = Object.freeze({
+  ultraLow: Object.freeze({
+    resolutionScale: 0.5, dynamicResolution: true, maxPixelRatio: 1, frameCap: 30,
+    shadows: 0, ao: 0, reflections: 0, lights: 0, volumetrics: 0,
+    drawDistance: 0, density: 0, traffic: 0, particles: 0,
+    antialiasing: 'off', bloom: 0, motionBlur: 0, filmGrain: false, chromaticAberration: false,
+  }),
   low: Object.freeze({
     resolutionScale: 0.7, dynamicResolution: true, maxPixelRatio: 1, frameCap: 0,
     shadows: 1, ao: 0, reflections: 0, lights: 0, volumetrics: 0,
@@ -343,6 +357,30 @@ export function applyPreset(settings, name, autoPreset = FALLBACK_PRESET) {
     graphics.preset = 'custom';
   }
   return settings;
+}
+
+/**
+ * Whether the game should hold itself to a small-memory budget. 'low' and 'full' are the player's own
+ * answer; 'auto' is the device's, from ui/detect.js, which has to guess on iOS because Safari reports no
+ * memory at all (see describeGraphics).
+ */
+export function memoryWanted(mode, detected) {
+  return mode === 'low' ? true : mode === 'full' ? false : detected === true;
+}
+
+/**
+ * Writes the derived memory flag where the renderer, the world and the atlas look for it. Called at boot
+ * with the device's answer, and again on every settings change, so switching the panel's choice takes
+ * effect without a reload.
+ * @param {object} settings
+ * @param {boolean} [detected]  describeGraphics' answer; left as it was when not given
+ * @returns {boolean} the flag now in force
+ */
+export function applyMemoryMode(settings, detected) {
+  const g = settings.graphics;
+  if (detected !== undefined) g.memoryDetected = detected === true;
+  g.lowMemory = memoryWanted(g.memoryMode, g.memoryDetected === true);
+  return g.lowMemory;
 }
 
 /** Fills the concrete graphics fields for the Auto preset; does nothing unless the preset is 'auto'. */

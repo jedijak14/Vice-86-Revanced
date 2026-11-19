@@ -26,8 +26,14 @@ export function createContext(canvas, { force = false } = {}) {
     relaxedAttrs = !!gl;
   }
   if (!gl) throw new Error('This game needs WebGL2, which this browser or device does not provide. Try a current version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.');
-  const floatTargets = gl.getExtension('EXT_color_buffer_float');
-  if (!floatTargets && !force) throw new Error('This graphics device cannot render to floating-point textures (EXT_color_buffer_float is missing), which the game needs for HDR lighting.');
+  // `getExtension` is idempotent, so asking twice for a name the answer turns on costs nothing.
+  // A device that can only render a *half*-float target still has everything the pipeline needs: every HDR
+  // surface here is RGBA16F already, and the one 32-bit attachment (linear depth, in metres) has a half-float
+  // equivalent whose step grows with distance -- which is exactly how its readers forgive it. So iOS and
+  // older mobile GPUs are asked for half before they are turned away, instead of being told to force.
+  const supported = (name) => gl.getExtension(name) !== null;
+  const floatSupport = floatTargetSupport(supported);
+  if (floatSupport === 'none' && !force) throw new Error('This graphics device cannot render to floating-point textures (neither EXT_color_buffer_float nor EXT_color_buffer_half_float is available), which the game needs for HDR lighting.');
   const ext = {
     parallel: gl.getExtension('KHR_parallel_shader_compile'),
     timer: gl.getExtension('EXT_disjoint_timer_query_webgl2'),
@@ -47,25 +53,47 @@ export function createContext(canvas, { force = false } = {}) {
     tierHint: guessTier(renderer, gl.getParameter(gl.MAX_TEXTURE_SIZE)),
   };
   if (caps.maxDrawBuffers < 4 && !force) throw new Error('This graphics device supports fewer than 4 render targets, which the game needs.');
-  if (force && (!floatTargets || caps.maxDrawBuffers < 4 || relaxedAttrs)) {
+  if (force && (floatSupport === 'none' || caps.maxDrawBuffers < 4 || relaxedAttrs)) {
     // Say what was stepped over, on the console where a person diagnosing this will find it. Forcing
     // cannot manufacture a feature: a device without float render targets is not going to draw HDR
     // because it was asked to try, and the honest expectation is a dark or wrong image, not a
     // downgraded one. What forcing does buy is the chance that the refusal was about the request.
     const skipped = [];
-    if (!floatTargets) skipped.push('float render targets (EXT_color_buffer_float)');
+    if (floatSupport === 'none') skipped.push('float render targets (EXT_color_buffer_float and EXT_color_buffer_half_float)');
     if (caps.maxDrawBuffers < 4) skipped.push(`${caps.maxDrawBuffers} draw buffer(s), 4 wanted`);
     if (relaxedAttrs) skipped.push("the 'high-performance' and desynchronised context attributes");
     console.warn(`WebGL2 was forced past: ${skipped.join(', ')}. The renderer will run as-is on this device and may fail or draw nothing.`);
-    caps.tierHint = 'low';            // whatever the autotuner would have picked, start at the bottom
+    caps.tierHint = 'ultraLow';       // whatever the autotuner would have picked, start at the very bottom
   }
-  return { gl, canvas, caps, rendererNamed, ext, forced: !!force, floatTargets: !!floatTargets, maxAnisotropy: ext.aniso ? Math.min(8, gl.getParameter(ext.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1, shared: new Map(), programs: [], waiting: [], compiling: [], quietSeconds: 0, lastProgram: '' };
+  if (floatSupport === 'half') console.info('HDR render targets: EXT_color_buffer_float is missing on this device, so the frame is being built in 16-bit float (RGBA16F, depth in R16F). It looks the same; it is a little less exact far away.');
+  return { gl, canvas, caps, rendererNamed, ext, forced: !!force, floatTargets: floatSupport !== 'none', floatSupport, depthFormat: depthFormatFor(floatSupport, gl), maxAnisotropy: ext.aniso ? Math.min(8, gl.getParameter(ext.aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1, shared: new Map(), programs: [], waiting: [], compiling: [], quietSeconds: 0, lastProgram: '' };
+}
+
+/**
+ * Which floating-point colour attachments this context will render into.
+ * `supported(name)` answers the extension question; nothing else is asked of it, so this is the whole
+ * of the device policy and it can be read — and tested — without a GL context.
+ * @returns {'full' | 'half' | 'none'}
+ */
+export function floatTargetSupport(supported) {
+  if (supported('EXT_color_buffer_float')) return 'full';        // 32-bit and 16-bit targets
+  if (supported('EXT_color_buffer_half_float')) return 'half';   // 16-bit only: the mobile and iOS case
+  return 'none';
+}
+
+/**
+ * The internal format to store view-space depth (metres) in. Half float keeps the same sampler and the same
+ * shader; its absolute step grows with the distance it is describing, and every reader of this texture already
+ * has a tolerance that grows with it (see `forward.js`: 0.3 + 0.015 × depth metres).
+ */
+export function depthFormatFor(support, gl) {
+  return support === 'full' ? gl.R32F : gl.R16F;
 }
 
 /** Rough preset guess from the renderer string; the UI refines it with measured frame times. */
 export function guessTier(renderer, maxTextureSize) {
   const r = renderer.toLowerCase();
-  if (/swiftshader|llvmpipe|software|basic render/.test(r)) return 'low';
+  if (/swiftshader|llvmpipe|software|basic render/.test(r)) return 'ultraLow';
   if (/rtx|radeon rx (6[7-9]|7[6-9]|9)\d\d|rx (6[7-9]|7[6-9])\d\d|arc a7|m[1-4] (max|ultra)/.test(r)) return 'ultra';
   if (/gtx (9[7-8]|1[06][5-9])\d|gtx 1080|rx (5[5-9]|6[0-6])\d\d|radeon pro|arc a[35]|apple m[1-4]|m[1-4] pro/.test(r)) return 'high';
   if (/intel|uhd|iris|hd graphics|adreno|mali|powervr|apple gpu|radeon\(tm\) graphics|vega/.test(r)) return maxTextureSize >= 16384 && /iris xe|radeon\(tm\) graphics|vega|apple gpu/.test(r) ? 'medium' : 'low';

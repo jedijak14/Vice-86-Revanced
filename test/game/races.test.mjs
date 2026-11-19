@@ -7,6 +7,7 @@ import { prepareLaneGraph, samplePoint } from '../../web/src/game/lanes.js';
 import {
   buildRoute, crossing, createRaces, buildGateMesh, formatTime, placeLabel, readBest, writeBest,
   TIERS, GATE_HALF, FALSE_START_MS, COUNTDOWN_SECONDS,
+  purseFor, shareFor, isNightHour, PLACE_SHARES, NIGHT_PURSE_BOOST,
 } from '../../web/src/game/races.js';
 import { FAMILY } from '../../web/src/core/ids.js';
 
@@ -428,4 +429,47 @@ test('a car the street takes back during a race is out, not on the board', () =>
   assert.equal(s.running, s.field - 1, `a retired car is still being scored (${JSON.stringify(s)})`);
   races.abort('Race called off');
   assert.equal(traffic.released.length, traffic.field.length - 1, 'a retired car was handed an order to forget');
+});
+
+test('a meeting has a purse, and the small hours make it heavier', () => {
+  for (const tier of TIERS) {
+    assert.ok(tier.purse > 0, `${tier.name} pays nothing`);
+    assert.equal(purseFor(tier, 15), tier.purse, 'a noon purse is not the tier\'s own');
+    assert.equal(purseFor(tier, 3), Math.round(tier.purse * NIGHT_PURSE_BOOST), `${tier.name} at three in the morning`);
+  }
+  assert.equal(isNightHour(22), true, 'a quarter past ten is not the night');
+  assert.equal(isNightHour(5), false, 'five is not the small hours');
+  assert.equal(purseFor(null, 12), TIERS[0].purse, 'a meeting nobody heard of has no purse at all');
+});
+
+test('the purse is split by the field, and a time trial keeps it whole', () => {
+  assert.equal(shareFor(1, 4), PLACE_SHARES[0], 'the winner does not take the winner\'s share');
+  assert.equal(shareFor(1, 1), 1, 'a race against the clock alone pays out in shares');
+  assert.equal(shareFor(null, 1), 1, 'no place recorded is not no money');
+  assert.equal(shareFor(4, 6), 0, 'fourth in a field of six was paid');
+  const total = shareFor(1, 4) + shareFor(2, 4) + shareFor(3, 4);
+  assert.ok(total <= 1 + 1e-9, `a purse paid out more than it held (${total})`);
+});
+
+test('the money in the middle of the road is what the result pays, and it is taken once', () => {
+  const { races, graph, messages } = setup({ hour: 3 });
+  const start = [graph.lanes[0].pts[0] + 20, graph.lanes[0].pts[2] + 40];
+  assert.ok(races.start('local', start[0], start[1]), 'could not start on the ring');
+  const at = races.place();
+  start[0] = at[0]; start[1] = at[1];
+  const night = Math.round(TIERS[0].purse * NIGHT_PURSE_BOOST);
+  assert.equal(races.state.purse, night, 'a three in the morning meeting did not price itself at night');
+  assert.equal(races.collect(), 0, 'the purse was handed over before the flag');
+  for (let i = 0; i < 400; i++) races.step(1 / 60, start, true);
+  const driven = driveThrough(races, races.route);
+  // The course on this ring is longer than a test wants to walk gate by gate, and the flag is the same
+  // entry point the gate logic uses, so bring the meeting to an end rather than hope at the drive.
+  if (!driven.snapshot.finished) races.finish(214_000);
+  const s = races.snapshot();
+  assert.equal(s.payout, Math.max(0, Math.round(night * shareFor(s.place, s.field))), 'the result and the purse disagree');
+  assert.ok(messages.some((m) => /purse|to take|flag/i.test(m)), 'nobody said a word about the money');
+  assert.ok(messages.some((m) => /in the middle/i.test(m)), 'the purse was never put on the street');
+  assert.equal(races.collect(), s.payout, 'the purse was not there to be taken');
+  assert.equal(races.collect(), 0, 'the purse was taken twice');
+  assert.equal(races.snapshot().paid, true, 'a taken purse is not marked taken');
 });

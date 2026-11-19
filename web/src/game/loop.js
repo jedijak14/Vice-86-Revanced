@@ -14,12 +14,22 @@ export const FIXED_DT = 1 / 120;
 /** Most steps taken for one frame. Below 12 frames per second the game slows down instead of spiralling. */
 export const MAX_STEPS_PER_FRAME = 10;
 
-/** A frame longer than this was not a slow frame but a suspended tab, a debugger stop or a system sleep. */
-const SUSPEND_THRESHOLD = 0.25;
+/**
+ * A frame longer than this was not a slow frame but a suspended tab, a debugger stop or a system sleep.
+ *
+ * It used to be 0.25 s, and that turned a slow machine into a stopped one: below four frames a second every
+ * frame looked like a suspension, so the game was handed 1/60 of a second for a frame that took a quarter of
+ * one, and the street ran at a twentieth of real time — measured, not imagined, on a 3.75 fps software boot
+ * where the game drew 16 frames in 66 seconds and the street clock moved by half a second. A device that is
+ * merely slow must be allowed to be slow: `MAX_FRAME_DT` and the step cap below are what keep a long frame
+ * from teleporting the world, and they already do that job at any rate. So the threshold has to sit well
+ * above what a struggling GPU can take a single frame to draw, and only mean "nobody was watching".
+ */
+export const SUSPEND_THRESHOLD = 2;
 /** Simulated time granted to the first frame after a suspension. */
-const RESUME_DT = 1 / 60;
+export const RESUME_DT = 1 / 60;
 /** Longest frame time passed on to cameras and effects. */
-const MAX_FRAME_DT = 0.1;
+export const MAX_FRAME_DT = 0.1;
 /** How early, at most, a capped frame may be shown: the jitter of display timestamps. */
 const CAP_TOLERANCE = 0.0015;
 

@@ -13,6 +13,8 @@ import { SIGNS, ATLAS_SIZE } from '../world/signs.js';
 // ------------------------------------------------------------------------------------------------ noise texture
 
 export const NOISE_SIZE = 256;
+/** Half the nominal atlas, and still every sign on it: what a weak preset or a small-memory device is given. */
+export const LOW_ATLAS_SIZE = 2048;
 
 /** Replace every value by its rank, so the histogram becomes exactly uniform over 0..1. */
 function equalise(field) {
@@ -1086,6 +1088,20 @@ export function drawAtlas(canvas, { createCanvas } = {}) {
 }
 
 /** Create a canvas, paint the atlas on it and return it (page side: pass the result to the renderer's setAtlas). */
+/**
+ * How big a canvas the sign and decal atlas needs, from the graphics settings. This is a memory decision
+ * rather than a legibility one: the packer works in the nominal 4096 grid and every glyph is scaled into
+ * whatever canvas it is given (world/signs.js), so a small canvas loses sharpness at the far end of a long
+ * word and nothing else. The atlas is one RGBA texture with mipmaps, which at 4096 is around three times
+ * what a 2048 one is and about a fifth of the memory in a 3 GB phone's whole budget for a page — so a
+ * device with little memory, or a preset that will never show the detail, is not given it.
+ */
+export function atlasSize(graphics = {}) {
+  const weak = graphics.preset === 'low' || graphics.preset === 'ultraLow';
+  if (graphics.lowMemory) return weak ? 1024 : LOW_ATLAS_SIZE;
+  return weak ? LOW_ATLAS_SIZE : ATLAS_SIZE;
+}
+
 export function buildAtlas({ size = ATLAS_SIZE, createCanvas } = {}) {
   const make = createCanvas || ((w, h) => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h })));
   return drawAtlas(make(size, size), { createCanvas: make });

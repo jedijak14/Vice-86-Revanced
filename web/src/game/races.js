@@ -18,11 +18,17 @@ import { Skin } from '../vehicles/traffic/skin.js';
 import { box, rod, quad, X, Y, Z } from '../vehicles/traffic/kit.js';
 import * as mt from '../vehicles/traffic/materials.js';
 
-/** The three meetings the street keeps. `length` is the target distance of one lap, metres. */
+/**
+ * The three meetings the street keeps. `length` is the target distance of one lap, metres, and
+ * `purse` is the money that is lying in the middle of the road before the flag drops — the field
+ * stakes it, not the player, so a race pays whether or not you have a dollar in your pocket.
+ * The long one is worth most because the field is bigger, the distance is further and the traffic
+ * you are threading at a hundred and forty is the reason anybody pays to watch it.
+ */
 export const TIERS = Object.freeze([
-  { id: 'local', name: 'Ocean Drive Run', length: 1200, opponents: 3, laps: 1, minutes: 3 },
-  { id: 'county', name: 'Paloma County Sprint', length: 2600, opponents: 4, laps: 1, minutes: 5 },
-  { id: 'palm', name: 'The Palm 500', length: 3400, opponents: 5, laps: 2, minutes: 9 },
+  { id: 'local', name: 'Ocean Drive Run', length: 1200, opponents: 3, laps: 1, minutes: 3, purse: 240 },
+  { id: 'county', name: 'Paloma County Sprint', length: 2600, opponents: 4, laps: 1, minutes: 5, purse: 700 },
+  { id: 'palm', name: 'The Palm 500', length: 3400, opponents: 5, laps: 2, minutes: 9, purse: 1800 },
 ]);
 
 /** metres either side of the centre line a gate is worth, and how far a car may be from the road. */
@@ -35,6 +41,38 @@ export const COUNTDOWN_SECONDS = 3.4;
 export const DID_NOT_FINISH_SECONDS = 150;
 /** metres in one step that means the car was picked up and put down, not driven (a teleport, a respawn) */
 export const TELEPORT = 60;
+
+/**
+ * What the places take of the purse. Nobody is paid for finishing fourth in a field of six, and the
+ * rest of the field is what keeps the winner's share under the whole: a race moves money around, it
+ * does not print it.
+ */
+export const PLACE_SHARES = Object.freeze([0.6, 0.25, 0.15]);
+/**
+ * What after ten at night and before five in the morning is added to a purse. The crowd that lays
+ * money on a street race lays more of it when it should be in bed, and a man running at three in the
+ * morning for the money is paid for the hour as much as for the lap.
+ */
+export const NIGHT_PURSE_BOOST = 1.25;
+
+/** The small hours, by the street clock. */
+export const isNightHour = (hour) => !(Number.isFinite(hour) && hour >= 5 && hour < 22);
+
+/** What is lying in the middle of the road for this meeting, at this hour. */
+export function purseFor(tier, hour = 12) {
+  const base = tier && tier.purse > 0 ? tier.purse : TIERS[0].purse;
+  return Math.round(base * (isNightHour(hour) ? NIGHT_PURSE_BOOST : 1));
+}
+
+/**
+ * A man's share of the purse, by where the field left him. A one-car field is a time trial: the clock
+ * was the only opponent, so finishing is winning and the whole purse is his.
+ */
+export function shareFor(place, field) {
+  if (!(field > 1)) return 1;
+  const p = Math.max(1, (place | 0) || field);
+  return p - 1 < PLACE_SHARES.length ? PLACE_SHARES[p - 1] : 0;
+}
 
 /**
  * A route: lanes in order, gates across them, and the map the drivers are given.
@@ -251,7 +289,13 @@ export function localStore() {
  * The races, in the game's hands.
  * @param {object} options { graph, renderer, traffic, land, notify, store, seed }
  */
-export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () => {}, store = localStore(), seed = 1 } = {}) {
+export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () => {}, store = localStore(), seed = 1, hour = null } = {}) {
+  // The purse is sized when the flag goes up, on the hour the street is at: a meeting called at dusk is
+  // worth what it was worth at dusk, and the clock moving under it mid-race does not change a bet.
+  const hourAt = () => {
+    const h = typeof hour === 'function' ? hour() : hour;
+    return Number.isFinite(h) ? h : 12;
+  };
   const mesh = { handle: -1, failed: false };
   const gates = [];
   const was = [0, 0], is = [0, 0];
@@ -260,6 +304,8 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
     active: false, tier: null, name: '', countdown: 0, elapsedMs: 0, penaltyMs: 0,
     passed: 0, total: 0, lap: 1, laps: 1, place: null, field: 1, finished: false, lastMs: 0,
     bestMs: 0, opponents: 0, distance: 0,
+    // The money: what is in the middle of the road, what the result pays, and whether it was taken.
+    purse: 0, payout: 0, paid: false,
   };
   let route = null, cars = null, lapOf = [], times = [], armed = false;
   const last = [0, 0];
@@ -317,7 +363,7 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
       if (!hit) { races.last = 'no road'; return null; }
       return TIERS.map((tier) => {
         const route = buildRoute(graph, hit.lane, hit.s, tier.length, rng);
-        return route ? { tier, length: route.length, gates: route.gates.length } : null;
+        return route ? { tier, length: route.length, gates: route.gates.length, purse: purseFor(tier, hourAt()) } : null;
       }).filter(Boolean);
     },
 
@@ -342,6 +388,7 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
       state.elapsedMs = 0; state.penaltyMs = 0; state.finished = false; state.lastMs = 0;
       state.passed = 0; state.total = route.gates.length * tier.laps; state.lap = 1; state.laps = tier.laps;
       state.distance = route.length; state.place = null; state.bestMs = 0;
+      state.purse = purseFor(tier, hourAt()); state.payout = 0; state.paid = false;
       times = [];
       showGates();
       // The opponents: traffic cars on the grid behind the line, told to follow the course.
@@ -368,9 +415,20 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
       // it back (see step()). Two different things, and only one of them ends a race.
       lapOf = (cars || []).map(() => ({ passed: 0, out: 0, dead: 0, was: null }));
       if (!cars || !cars.length) notify('Nobody turned up to race you');
-      notify(`${tier.name} · ${Math.round(route.length)} m over ${tier.laps} lap${tier.laps > 1 ? 's' : ''}, ${route.gates.length} gates`);
+      notify(`${tier.name} · ${Math.round(route.length)} m over ${tier.laps} lap${tier.laps > 1 ? 's' : ''}, ${route.gates.length} gates · $${state.purse.toLocaleString('en-US')} in the middle`);
       return true;
       /* the grid is where the cars are; see place() */
+    },
+
+    /**
+     * The purse, once: handed to whoever is keeping the money. Nothing is owed after it has been taken,
+     * so a caller that asks every frame gets 0 and can ask again all day.
+     * @returns {number} dollars
+     */
+    collect() {
+      if (!state.finished || state.paid) return 0;
+      state.paid = true;
+      return Math.max(0, state.payout);
     },
 
     /**
@@ -391,6 +449,7 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
       if (cars && traffic.releaseFromRace) traffic.releaseFromRace(cars);
       cars = null;
       state.active = false; state.place = null; armed = false;
+      state.purse = 0; state.payout = 0; state.paid = false;
       clearGates();
       if (reason) notify(reason);
     },
@@ -489,6 +548,12 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
         notify(`${state.name}  ·  ${formatTime(ms)}, best is ${formatTime(best.ms)}`);
       }
       races.rank();
+      // The purse is settled the moment the field is: the money was on the street before the flag and
+      // the result only says which car it goes to. Collecting it is the caller's business (game.js).
+      state.payout = Math.max(0, Math.round(state.purse * shareFor(state.place, state.field)));
+      notify(state.place === 1
+        ? `You took the flag and the purse · $${state.payout.toLocaleString('en-US')}`
+        : `P${state.place || '?'} of ${state.field} · ${state.payout ? `$${state.payout.toLocaleString('en-US')} to take` : 'the field took the purse'}`);
       // The field goes back to being traffic, and the board goes up: the course itself stays in place
       // until the next start, so the result and the gates can still be read after the flag.
       if (cars && traffic.releaseFromRace) traffic.releaseFromRace(cars);
@@ -537,6 +602,7 @@ export function createRaces({ graph, renderer, traffic, land = 1.2, notify = () 
         toNext: state.active ? nextDistance() : 0,
         place: state.place, field: state.field, lastMs: state.lastMs, bestMs: (readBest(store, state.tier) || {}).ms || state.bestMs,
         opponents: state.opponents, running: state.running, length: Math.round(state.distance),
+        purse: state.purse, payout: state.payout, paid: state.paid,
         // Why a street would not lay a course, or why this one ended: 'no road', 'no course', ''. A
         // script that sees a race with no gates passed needs this, not a guess.
         last: state.last,

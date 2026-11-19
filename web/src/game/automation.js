@@ -9,7 +9,10 @@ import { CARS } from '../vehicles/cars.js';
 import { ENGINE } from '../render/identity.js';
 import { allowedCar } from './garage.js';
 
-const QUALITY_NAMES = ['low', 'medium', 'high', 'ultra'];
+// Query values are matched case-folded, so the one camelCase preset needs to be spelled without its
+// capital here and turned back into the settings vocabulary's name below.
+const QUALITY_NAMES = ['ultralow', 'low', 'medium', 'high', 'ultra'];
+const QUALITY_PRESET = Object.freeze({ ultralow: 'ultraLow', low: 'low', medium: 'medium', high: 'high', ultra: 'ultra' });
 const WEATHER_NAMES = ['clear', 'cloudy', 'overcast', 'rain', 'storm'];
 const CAMERA_NAMES = ['chase', 'bonnet', 'orbit', 'free'];
 
@@ -39,7 +42,7 @@ export function parseOptions(search) {
     time: null,
     weather: oneOf(params.get('weather'), WEATHER_NAMES),
     freeze: flag(params, 'freeze'),
-    quality: oneOf(params.get('quality'), QUALITY_NAMES),
+    quality: QUALITY_PRESET[oneOf(params.get('quality'), QUALITY_NAMES)] || null,
     /**
      * 'force': boot past the renderer's capability checks. Which devices are refused, and what happens
      * when you insist, is documented in render/gl.js (createContext).
@@ -122,6 +125,8 @@ export function createHooks() {
     clearWanted: () => run((g) => g.clearWanted()),
     /** The crowd on the pavements: { peds, articulated, density, hailing, startled, passenger }. */
     crowd: () => (game && game.crowd ? game.crowd : null),
+    /** Whether the crowd's bodies reached the camera: { rendered, triangles } from the last drawn frame. */
+    crowdRender: () => (game && game.crowdRender ? game.crowdRender : null),
     /** Puts a hailer on the nearest kerb to x, z, for a script that wants a fare. */
     hail: (x, z) => run((g) => g.hailAt(x, z)),
     /** Street races: the meeting offered where the car is standing, and the board. */
@@ -156,6 +161,16 @@ export function createHooks() {
     setCamera: (mode, pose) => run((g) => g.setCamera(mode, pose)),
     setPaint: (index) => run((g) => g.setPaint(index)),
     input: (actions) => run((g) => g.injectInput(actions)),
+    /** A one-shot press, the way a key sends one: 'foot', 'weapon', 'recover'. */
+    press: (action) => run((g) => g.press(action)),
+    /** What the nearest shopfront is, and whether the room behind it is up. See game/shopInfo. */
+    shop: (x, z) => run((g) => g.shopInfo(x, z)),
+    /** The nearest shopfront anywhere on the island, open preferred. See game/nearestShop. */
+    nearestShop: () => run((g) => g.nearestShop()),
+    /** Move the walker to a spot on foot, so a check does not have to walk there. */
+    walkTo: (x, z) => run((g) => g.walkTo(x, z)),
+    /** The walker, the gun and the pocket, as the game keeps them. */
+    onFoot: () => (game ? { onFoot: game.onFoot, foot: game.footState ? game.footState() : null, gun: game.gunState ? game.gunState() : null, purse: game.purseState ? game.purseState() : null } : null),
     /** The car's state: { id, position, yaw, speed, rpm, gear, onRoad }; null until the game exists. */
     car: () => (game ? game.carState() : null),
     /** Every car in the registry: [{ id, released }]. */

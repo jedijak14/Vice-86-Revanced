@@ -1,0 +1,56 @@
+{
+ "files": [
+  {
+   "bytes": 334384,
+   "gitBlob": "3c0079594e7a86415a9402e2e16d894b95ceb655",
+   "local": "kaykit-adventures/Barbarian.glb",
+   "sha256": "932eb04f9f555806de124305f74ce39d802870c7f93a5a8527ec995f198783b6",
+   "source": "addons/kaykit_character_pack_adventures/Characters/gltf/Barbarian.glb",
+   "srcBytes": 3613268
+  },
+  {
+   "bytes": 380284,
+   "gitBlob": "59e3887c50de85c12f29e4a9a1adb9c72bd4908f",
+   "local": "kaykit-adventures/Knight.glb",
+   "sha256": "f26a3ba722938831c16d720abfa6db328565ea968aa27f643fb235702f7588df",
+   "source": "addons/kaykit_character_pack_adventures/Characters/gltf/Knight.glb",
+   "srcBytes": 3659532
+  },
+  {
+   "bytes": 310832,
+   "gitBlob": "cc1d9789f3827928c18a97126b285148fda6366a",
+   "local": "kaykit-adventures/Mage.glb",
+   "sha256": "69bf61ac869d0292acb53064b93299d7a389cc7274456d2d4fd3faaadbe7c147",
+   "source": "addons/kaykit_character_pack_adventures/Characters/gltf/Mage.glb",
+   "srcBytes": 3589240
+  },
+  {
+   "bytes": 337388,
+   "gitBlob": "1d42123e5748b6a4f7272187251209ebb8efecc9",
+   "local": "kaykit-adventures/Rogue.glb",
+   "sha256": "bd74b1b75b97cd2af93554f83598fec776d8247ff507a053d9937a61a46eba2b",
+   "source": "addons/kaykit_character_pack_adventures/Characters/gltf/Rogue.glb",
+   "srcBytes": 3616284
+  },
+  {
+   "bytes": 318960,
+   "gitBlob": "155da931c1f1f895b5cbe47700b49ead284e98a2",
+   "local": "kaykit-adventures/Rogue_Hooded.glb",
+   "sha256": "fea22b3983f92b1688861c02b1ff2b355c3c03d2b101252796dacff3a8fc5391",
+   "source": "addons/kaykit_character_pack_adventures/Characters/gltf/Rogue_Hooded.glb",
+   "srcBytes": 3597652
+  }
+ ],
+ "generatedBy": "tools/vendor_models.py",
+ "licence": {
+  "bytes": 891,
+  "kind": "CC0",
+  "path": "LICENSE.txt",
+  "sha256": "ae322141814056dda0deea7540d74c41d87aee1da319977cd1bd84ee5a923629"
+ },
+ "note": "KayKit Character Pack: Adventures, textured rigged humanoids and gear.",
+ "pack": "kaykit-adventures",
+ "ref": "main",
+ "source": "KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0",
+ "totalBytes": 1681848
+}
