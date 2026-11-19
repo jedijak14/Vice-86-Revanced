@@ -17,7 +17,11 @@ export function defineTables(K) {
     // Traffic voices: TRAFFIC_VOICES records of TRAFFIC_STRIDE floats starting at TRAFFIC:
     // [gain 0..1 (0 = slot free), pan -1..1, doppler ratio, speed m/s, kind code, throttle, distance m, serial]
     TRAFFIC: 32, TRAFFIC_STRIDE: 8, TRAFFIC_VOICES: 6,
-    SIZE: 80,
+    // Recorded samples are playing the car in hand (audio/samples.js): 1 fades this synth's own engine
+    // and horn out so the two never speak at once, 0 leaves them as they were. Everything else the synth
+    // does -- road, traffic, rain, the city, thunder, impacts, the menu -- is unaffected by it.
+    SAMPLES: 80,
+    SIZE: 81,
   });
 
   /** One-shot events sent to the synth as [code, a, b, c, d]. */

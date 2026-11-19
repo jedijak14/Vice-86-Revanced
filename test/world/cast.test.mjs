@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import { Gltf } from '../../web/src/core/gltf.js';
 import { Rig, Player, createPose, sampleClip, resetPose } from '../../web/src/core/animate.js';
-import { loadCast, retargetClips, skinInto, ROLES, CHARACTERS, CHARACTER_PACK, WARDROBE } from '../../web/src/world/people/cast.js';
+import { loadCast, retargetClips, skinInto, ROLES, CHARACTERS, CHARACTER_PACK, ANIMATION_PACK, WARDROBE } from '../../web/src/world/people/cast.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..', '..');
@@ -55,8 +55,27 @@ test('the manifest is the gate: an unlisted file is not loaded', async () => {
     const detail = await readJSON(`assets/models/${pack.pack}/manifest.json`);
     assert.equal(detail.totalBytes, pack.bytes, `${pack.pack}: the two manifests disagree about size`);
   }
-  const bytes = manifest.packs.reduce((sum, p) => sum + p.bytes, 0);
-  assert.ok(bytes < 8e6, `the model library is ${(bytes / 1e6).toFixed(1)} MB, which is more than a page should download for pedestrians`);
+  // What a page downloads for the pavement is the cast, and the cast is two packs; loadCast counts the
+  // same bytes at run time against the same budget, so the two cannot drift apart. The player's own body
+  // is a third pack that the crowd never fetches, and it is weighed on its own rather than hidden inside
+  // a number that says "pedestrians".
+  const cast = manifest.packs.filter((p) => p.pack === CHARACTER_PACK || p.pack === ANIMATION_PACK);
+  assert.equal(cast.length, 2, 'the cast is the character pack and the animation pack, and nothing else');
+  const castBytes = cast.reduce((sum, p) => sum + p.bytes, 0);
+  assert.ok(castBytes < 8e6, `the cast is ${(castBytes / 1e6).toFixed(1)} MB, which is more than a page should download for pedestrians`);
+
+  // One figure, fetched once, and heavy because it is 370 304 triangles of a person rather than five of a
+  // street: the project owner's own upload, so the ceiling is stated rather than argued with. The pack
+  // holds the upload as the source of record plus what tools/rig_player.py made from it -- the shaped,
+  // skinned figure and the constants that re-home the clips -- and it is the rigged file the game would
+  // fetch, so it is the file the ceiling weighs. If it is ever decimated -- and on the weakest tier it
+  // should be -- this number comes down with it.
+  const own = manifest.packs.find((p) => p.pack === 'player');
+  assert.ok(own, `the player's body is in the manifest, so the licence and the bytes are accounted for`);
+  assert.deepEqual(own.files.sort(), ['player/model.glb', 'player/rig.json', 'player/rigged.glb']);
+  const detail = await readJSON('assets/models/player/manifest.json');
+  const rigged = detail.files.find((f) => f.local === 'player/rigged.glb');
+  assert.ok(rigged.bytes < 10e6, `the rigged player is ${(rigged.bytes / 1e6).toFixed(1)} MB, which is more than one figure should weigh`);
   await assert.rejects(
     () => loadCast({ fetchFile, only: ['NobodyFromAnUnlistedFile'] }),
     /not in the asset manifest|ENOENT/,

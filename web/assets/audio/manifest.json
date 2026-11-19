@@ -1,0 +1,502 @@
+{
+ "generator": "tools/make_audio.py",
+ "seed": 1447641925,
+ "sampleRate": 32000,
+ "encoding": "16-bit signed PCM, mono, little-endian WAV",
+ "licence": "CC0 1.0 Universal",
+ "licenceNote": "Rendered from numbers by this repository's own tool, from no third-party recording: nothing to credit and nothing to take back.",
+ "engines": {
+  "v8": {
+   "cyl": 8,
+   "pipe": 46.0,
+   "orders": 3.2,
+   "whine": 0.0,
+   "lash": 0.05,
+   "lope": 0.16,
+   "drive": 1.9,
+   "rpm": {
+    "idle": 780,
+    "cruise": 2600,
+    "redline": 5900
+   },
+   "note": "front-engine V8, cross-plane crank: a lopey idle, four groups of two fires per cycle"
+  },
+  "v12": {
+   "cyl": 12,
+   "pipe": 62.0,
+   "orders": 4.6,
+   "whine": 0.1,
+   "lash": 0.03,
+   "lope": 0.05,
+   "drive": 1.35,
+   "rpm": {
+    "idle": 820,
+    "cruise": 3400,
+    "redline": 7400
+   },
+   "note": "V12: twelve even fires per cycle, a smooth buzz, a turbo-soft top end"
+  },
+  "flat12": {
+   "cyl": 12,
+   "pipe": 54.0,
+   "orders": 5.1,
+   "whine": 0.06,
+   "lash": 0.07,
+   "lope": 0.07,
+   "drive": 1.25,
+   "rpm": {
+    "idle": 880,
+    "cruise": 4200,
+    "redline": 8600
+   },
+   "note": "rear flat-12: sings rather than rumbles, lid lifted a touch at 8 600 rpm"
+  },
+  "flat6t": {
+   "cyl": 6,
+   "pipe": 40.0,
+   "orders": 2.6,
+   "whine": 0.34,
+   "lash": 0.06,
+   "lope": 0.09,
+   "drive": 1.6,
+   "rpm": {
+    "idle": 850,
+    "cruise": 3100,
+    "redline": 6800
+   },
+   "note": "turbo flat-6: a low thump under a boost whistle that opens up on part throttle"
+  }
+ },
+ "files": [
+  {
+   "name": "v8_idle.wav",
+   "bytes": 68968,
+   "sha256": "7b362ba48da75a87538582b1924f466f06b4363bd5ad056a68c1f4c2d531348d",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.0769,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.3032,
+   "refRpm": 780.0,
+   "firesPerSecond": 52.0,
+   "cylinders": 8,
+   "render": {
+    "rpm": 780.0,
+    "firesPerSecond": 52.0,
+    "cylinders": 8,
+    "cycles": 7,
+    "seconds": 1.0769
+   }
+  },
+  {
+   "name": "v8_cruise.wav",
+   "bytes": 73890,
+   "sha256": "5147b77003d50fdc9cbeac250e14dedebfa03d137e42b355e443b88a5fd5a235",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1538,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.2402,
+   "refRpm": 2600.0,
+   "firesPerSecond": 173.33,
+   "cylinders": 8,
+   "render": {
+    "rpm": 2600.0,
+    "firesPerSecond": 173.33,
+    "cylinders": 8,
+    "cycles": 25,
+    "seconds": 1.1538
+   }
+  },
+  {
+   "name": "v8_redline.wav",
+   "bytes": 74240,
+   "sha256": "aacd3534c5cf5d5316cfaef0d2e7b3fc90c432672455b6e8a57250faf8f7f84e",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1593,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.2819,
+   "refRpm": 5900.0,
+   "firesPerSecond": 393.34,
+   "cylinders": 8,
+   "render": {
+    "rpm": 5900.0,
+    "firesPerSecond": 393.34,
+    "cylinders": 8,
+    "cycles": 57,
+    "seconds": 1.1593
+   }
+  },
+  {
+   "name": "v12_idle.wav",
+   "bytes": 74970,
+   "sha256": "1e8c922df43b7f36a1dd8c464ec64a54d0192d3ce9fcf469d8ccf2f2b7f6f3d7",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1707,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.4866,
+   "refRpm": 820.0,
+   "firesPerSecond": 82.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 820.0,
+    "firesPerSecond": 82.0,
+    "cylinders": 12,
+    "cycles": 8,
+    "seconds": 1.1707
+   }
+  },
+  {
+   "name": "v12_cruise.wav",
+   "bytes": 74586,
+   "sha256": "585571000658b1853051fc9a5ad1d682bb6be458c568c0c1f03b0c34a2e0a282",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1647,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.3291,
+   "refRpm": 3400.0,
+   "firesPerSecond": 340.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 3400.0,
+    "firesPerSecond": 340.0,
+    "cylinders": 12,
+    "cycles": 33,
+    "seconds": 1.1647
+   }
+  },
+  {
+   "name": "v12_redline.wav",
+   "bytes": 73730,
+   "sha256": "0d36ee99e30e726c6525a3b69581287d80635946d7d45049ec6f9d9e66373970",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1513,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.464,
+   "refRpm": 7400.0,
+   "firesPerSecond": 740.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 7400.0,
+    "firesPerSecond": 740.0,
+    "cylinders": 12,
+    "cycles": 71,
+    "seconds": 1.1513
+   }
+  },
+  {
+   "name": "flat12_idle.wav",
+   "bytes": 69862,
+   "sha256": "083f870a54002cebf71f4bdd0c9ea56f05fec3ef28854904efd7754876682b6b",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.0909,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.3122,
+   "refRpm": 880.0,
+   "firesPerSecond": 88.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 880.0,
+    "firesPerSecond": 88.0,
+    "cylinders": 12,
+    "cycles": 8,
+    "seconds": 1.0909
+   }
+  },
+  {
+   "name": "flat12_cruise.wav",
+   "bytes": 73186,
+   "sha256": "c152daaaf29217ec69c36e7392f0d3035672eaa89f6fb0f1373c4e4a464b0fa7",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1428,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.3847,
+   "refRpm": 4200.0,
+   "firesPerSecond": 420.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 4200.0,
+    "firesPerSecond": 420.0,
+    "cylinders": 12,
+    "cycles": 40,
+    "seconds": 1.1428
+   }
+  },
+  {
+   "name": "flat12_redline.wav",
+   "bytes": 73272,
+   "sha256": "88dc964c3d948e12726660e32c13aa72cc9a712b101da2e1c49eb07f48f03933",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1442,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.4566,
+   "refRpm": 8600.0,
+   "firesPerSecond": 860.0,
+   "cylinders": 12,
+   "render": {
+    "rpm": 8600.0,
+    "firesPerSecond": 860.0,
+    "cylinders": 12,
+    "cycles": 82,
+    "seconds": 1.1442
+   }
+  },
+  {
+   "name": "flat6t_idle.wav",
+   "bytes": 72326,
+   "sha256": "60aab5dd96c9173f124b6db79a103d180b3e41e35fc206c7270bf78555cf37b1",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1294,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.4405,
+   "refRpm": 850.0,
+   "firesPerSecond": 42.5,
+   "cylinders": 6,
+   "render": {
+    "rpm": 850.0,
+    "firesPerSecond": 42.5,
+    "cylinders": 6,
+    "cycles": 8,
+    "seconds": 1.1294
+   }
+  },
+  {
+   "name": "flat6t_cruise.wav",
+   "bytes": 74366,
+   "sha256": "c0997675dc2f0a861d873d63eebadb7c6cfaad944fd8a232f68d4c177e8e3e19",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1613,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.3515,
+   "refRpm": 3100.0,
+   "firesPerSecond": 155.0,
+   "cylinders": 6,
+   "render": {
+    "rpm": 3100.0,
+    "firesPerSecond": 155.0,
+    "cylinders": 6,
+    "cycles": 30,
+    "seconds": 1.1613
+   }
+  },
+  {
+   "name": "flat6t_redline.wav",
+   "bytes": 73456,
+   "sha256": "540be2b1d9b9cab1da686f30164984dd9c13749beff47c1f1d24ec3ed6e3f6d9",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.1471,
+   "loop": true,
+   "seamless": true,
+   "peak": 0.912,
+   "rms": 0.435,
+   "refRpm": 6800.0,
+   "firesPerSecond": 340.0,
+   "cylinders": 6,
+   "render": {
+    "rpm": 6800.0,
+    "firesPerSecond": 340.0,
+    "cylinders": 6,
+    "cycles": 65,
+    "seconds": 1.1471
+   }
+  },
+  {
+   "name": "horn.wav",
+   "bytes": 33580,
+   "sha256": "4a41c65ebbf87933bde850c68eb9cfc3c1dfba999a8fa886566427bb4b3a1c7f",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.524,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.871,
+   "rms": 0.446,
+   "render": {
+    "reeds": [
+     392.0,
+     466.0
+    ],
+    "seconds": 0.524
+   }
+  },
+  {
+   "name": "horn_low.wav",
+   "bytes": 39980,
+   "sha256": "5deeb70ad3a01bc0a4324cb0f38ba38f30bba2c6977c38cd80353bd4a4cb2daa",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.624,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.871,
+   "rms": 0.4397,
+   "render": {
+    "reeds": [
+     233.0,
+     311.0
+    ],
+    "seconds": 0.624
+   }
+  },
+  {
+   "name": "starter.wav",
+   "bytes": 67244,
+   "sha256": "af06283a6298ea7d71d1b5bf33e8e1890e97d9fa818b76485f6fc400ceefbc12",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 1.05,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8414,
+   "rms": 0.2746,
+   "render": {
+    "catchAt": 0.72,
+    "seconds": 1.05
+   }
+  },
+  {
+   "name": "shift.wav",
+   "bytes": 16684,
+   "sha256": "0039bf9c89a8a5302c5ba87028a4de3847d28c7d4739ab44af041a195aacaed4",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.26,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.7079,
+   "rms": 0.0555,
+   "render": {
+    "seconds": 0.26
+   }
+  },
+  {
+   "name": "door.wav",
+   "bytes": 54444,
+   "sha256": "bba61e465a4bdd485a93412d1efc394215b0f46d2a8dfd072913eb884cb065f9",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.85,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.7943,
+   "rms": 0.0919,
+   "render": {
+    "slamAt": 0.3,
+    "seconds": 0.85
+   }
+  },
+  {
+   "name": "hit_thud.wav",
+   "bytes": 19244,
+   "sha256": "7d5883d8ccf09cc0f15cdabb0ff2b0d7764a25f01d383aacc480c2a41d60fcd1",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.3,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8318,
+   "rms": 0.2082,
+   "render": {
+    "seconds": 0.3,
+    "kind": "thud"
+   }
+  },
+  {
+   "name": "hit_metal.wav",
+   "bytes": 35244,
+   "sha256": "c3a136a048e5275949a8fb8dd4d140349e6246016d914e154e252359cedc1738",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.55,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8318,
+   "rms": 0.1595,
+   "render": {
+    "seconds": 0.55,
+    "kind": "metal"
+   }
+  },
+  {
+   "name": "hit_glass.wav",
+   "bytes": 44844,
+   "sha256": "5d5a753d7512af6fabdf5c610a3bbba7003e86bf8d0fd3e318da331f1dfe53f7",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.7,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8318,
+   "rms": 0.0978,
+   "render": {
+    "seconds": 0.7,
+    "kind": "glass"
+   }
+  },
+  {
+   "name": "hit_scrape.wav",
+   "bytes": 57644,
+   "sha256": "d2177826113d3a853fa75f818a24fb8780bcb104c4c92596e847256bed37cc79",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.9,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8318,
+   "rms": 0.0464,
+   "render": {
+    "seconds": 0.9,
+    "kind": "scrape"
+   }
+  },
+  {
+   "name": "splash.wav",
+   "bytes": 38444,
+   "sha256": "5990b140b394f768c6e1f0d7d9e119b752abfa9a1d4e93628c7f100c87ddf93f",
+   "sampleRate": 32000,
+   "channels": 1,
+   "seconds": 0.6,
+   "loop": false,
+   "seamless": null,
+   "peak": 0.8318,
+   "rms": 0.1027,
+   "render": {
+    "seconds": 0.6,
+    "kind": "splash"
+   }
+  }
+ ],
+ "totalBytes": 1284204
+}

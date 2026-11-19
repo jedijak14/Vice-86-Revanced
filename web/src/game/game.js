@@ -21,7 +21,7 @@
 // wait for it.
 
 import { saturate, smoothstep, lerp } from '../core/math.js';
-import { FIXED_DT, KIND, surfaceOfField, carSpec } from '../physics/index.js';
+import { FIXED_DT, KIND, surfaceOfField, carSpec, trafficSpec } from '../physics/index.js';
 import { CARS, carById, DEFAULT_CAR } from '../vehicles/cars.js';
 import { MARKING_FILL } from '../world/roads/markings.js';
 import { applyPreset, isPresetName } from '../ui/settings.js';
@@ -35,7 +35,7 @@ import { createPlayer } from './player.js';
 import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
 import { createCrowd, PEOPLE_BY_TIER } from './crowd.js';
-import { createFoot } from './foot.js';
+import { createFoot, BOARD_DISTANCE, BOARD_SPEED_LIMIT } from './foot.js';
 import { createWeapon, WITNESS_RADIUS } from './weapons.js';
 import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
@@ -73,6 +73,22 @@ const TITLE_INPUT = Object.freeze({ throttle: 0, brake: 0, steer: 0, handbrake: 
 const PARKED_INPUT = TITLE_INPUT;
 /** Metres under the street's own level that a walker is in the sea rather than on the shore. */
 const DEEP_WATER = 1.2;
+
+/**
+ * The engine a car taken off the street is heard with. The recordings are of four engines (docs/AUDIO.md)
+ * and a traffic car has none of them: it is driven on a specification of its own (physics/specs.js's
+ * TRAFFIC), with its own idle and its own redline, which is what sets the rate a recording is played at.
+ * What is left to choose is the character of it, so each kind takes the nearest engine there is: the small
+ * cars the turbo flat-six, which is the smallest and the most modern-sounding of the four; the heavy cars
+ * and the fleet the American V8, which is the lowest and has the most torque in it; a fast car a twelve.
+ * A bus on a V8's recording is still a bus, because it is the bus's own 800 rpm turning it.
+ */
+const TRAFFIC_VOICE = Object.freeze({
+  compact: 'flat6t', hatch: 'flat6t', sedan: 'flat6t', wagon: 'flat6t', taxi: 'flat6t',
+  coupe: 'v12', sports: 'flat12',
+  pickup: 'v8', van: 'v8', police: 'v8', bus: 'v8', truck: 'v8',
+});
+const voiceFor = (kind) => TRAFFIC_VOICE[kind] || 'v8';
 // The garage's detail by graphics preset (design/GARAGE.md, The set); High and beyond get the full set.
 const GARAGE_DETAIL = Object.freeze({ low: 0, medium: 1 });
 const GARAGE_FULL_DETAIL = 2;
@@ -131,6 +147,13 @@ export function createGame(deps) {
   // The car being driven. `setCar` replaces both; nothing else may keep the player object, its
   // vehicle or its model across frames (see adoptPlayer for the few values that are copied).
   let carId = models.carId;
+  /**
+   * The car he is in when it is not the car he owns: one he took off the street. `carId` stays the
+   * garage's choice throughout -- that is the car the garage will hand him and the car whose colour is
+   * remembered -- and this says what is actually under him while it lasts.
+   * @type {{id: string, name: string, voice: string, kind: string, model: object}|null}
+   */
+  let stolenCar = null;
   let player = createPlayer({ renderer, physics, model: models.car, spec: carSpec(carId) });
   const ray = { origin: [0, 0, 0], direction: [0, -1, 0] };
   const camera = createCamera({
@@ -283,11 +306,108 @@ export function createGame(deps) {
     foot.attach(footCast, renderer);
     drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
     onFoot = true;
+    if (audio) audio.door(false);         // the door he just came out of, swinging and shutting behind him
     input.looking = true;                 // the picture is his neck now, not the turntable's
+    input.lookMode = 'neck';               // drag right looks right; the turntable's signs walk a man in circles
     camera.setMode('free');
     camera.snap();
     gun.equip('pistol');                  // there is a short .38 under the driver's seat, as there was in 1986
-    toast('On foot \u00b7 Space to fire, B to draw or stow, R to reload, F back in');
+    toast('On foot \u00b7 Space to fire, B to draw or stow, R to reload, F back in \u2014 or into any car you can reach');
+  }
+
+  /**
+   * The car the street is holding out to him, measured every step while he is on foot: traffic's own
+   * pooled record, or null when nothing is within reach of his hand. It is the same measurement foot.js
+   * makes of his own car, with the same two numbers, so the offer and the taking cannot disagree about
+   * how far a door is.
+   * @type {object|null}
+   */
+  let streetCar = null;
+
+  /**
+   * Takes a car off the street and drives away in it. The car is taken out of traffic's own lists and
+   * rebuilt as the player's, in the same place, facing the same way, wearing the same paint, on the
+   * specification of its own kind -- a bus taken off the street is eleven tonnes and geared like a bus,
+   * not the car he drove to get there. The car he was driving is not destroyed for it: it is left
+   * standing where he left it, as a parked car of its own type that traffic owns from then on, so the
+   * street he walked away from still has his car in it and he can take it back the same way.
+   *
+   * The people nearby see it and run, and the record takes a charge: heavier when somebody was sitting
+   * in the car than when it was standing empty, because that is what the two are.
+   */
+  function takeCar() {
+    // Asked again here rather than read from the step's offer: the key is pressed between steps, and a
+    // car that has rolled on or been retired in the meantime is a car that is not there to take.
+    const ask = traffic.nearestTo(foot.pos[0], foot.pos[2], BOARD_DISTANCE, BOARD_SPEED_LIMIT);
+    if (!ask.active) { toast('Nothing within reach to take'); return; }
+    const id = ask.id, name = ask.name;
+    const taken = traffic.take(id);
+    if (!taken) { toast('It drove off'); return; }
+    // The new car is built before anything is given up, as it is in the garage: a model that turns out
+    // to be undrivable puts the car back on the street and leaves the player standing where he was.
+    let next = null;
+    try {
+      next = createPlayer({ renderer, physics, model: taken.model, spec: trafficSpec(taken.kind, taken.model) });
+    } catch (error) {
+      traffic.adopt({
+        model: taken.model, kind: taken.kind, name: taken.name, x: taken.x, y: taken.y, z: taken.z,
+        yaw: taken.yaw, paint: taken.paint, dirt: taken.dirt, registryId: taken.registryId,
+      });
+      console.warn(`The ${taken.name} could not be driven: ${error && error.message ? error.message : String(error)}`);
+      toast('It will not start');
+      return;
+    }
+    const old = player;
+    const headlampMode = old.headlampMode;
+    if (old.vehicle) {
+      traffic.adopt({
+        model: old.model, name: drivenCar().name, kind: old.model.kind || 'sedan',
+        mass: old.vehicle.spec.mass,
+        x: old.vehicle.pos[0], y: old.groundY + 0.03, z: old.vehicle.pos[2], yaw: old.vehicle.yaw,
+        paint: old.paints[old.paintIndex] || null, dirt: 0,
+        // A car of his own goes back on the street as a car of his own, and keeps its garage id: taking
+        // it back is then the same act, and gives him the car the garage sold him.
+        registryId: stolenCar ? null : carId,
+      });
+    }
+    skids.lift();
+    old.dispose();
+    player = next;
+    player.headlampMode = headlampMode;
+    place[0] = taken.x; place[1] = groundHeight(taken.x, taken.z) + 0.03; place[2] = taken.z;
+    if (taken.registryId) { carId = taken.registryId; stolenCar = null; }
+    else {
+      stolenCar = {
+        id: `street:${taken.kind}`, name: taken.name, voice: voiceFor(taken.kind),
+        kind: taken.kind, model: taken.model,
+      };
+    }
+    adoptPlayer();
+    player.place(place, taken.yaw);
+    nitrous.reset();
+    stepper.reset();
+    waterTime = 0;
+    if (autopilot) autopilot.reset();
+    if (hornOn && audio) { hornOn = false; audio.horn(false); }
+    // The colour it was wearing on the street, and the swatches of the car he is now sitting in.
+    const worn = taken.model.paints ? taken.model.paints.indexOf(taken.paint) : -1;
+    const applied = player.setPaint(worn < 0 ? 0 : worn);
+    ui.setPaints(player.paints, applied, taken.model.paintNames || null);
+    ui.setState({ paint: applied });
+    refreshSubject();
+    streetCar = null;
+    // And back to being a driver: the same door going the other way, the neck giving way to the chase rig.
+    onFoot = false;
+    foot.letGo();
+    if (audio) audio.door(true);
+    input.looking = false;
+    input.lookMode = 'orbit';
+    camera.setMode('chase');
+    camera.snap();
+    gun.stow();
+    const seen = wanted.add(taken.hadDriver ? 'car jacked' : 'car stolen');
+    if (taken.hadDriver) crowd.frighten(taken.x, taken.z, 30, 1);
+    toast(seen ? `${name} taken \u00b7 that was seen` : `${name} taken`);
   }
 
   /** Back into the car: the body goes where it came from and the camera goes back to the chase rig. */
@@ -298,7 +418,9 @@ export function createGame(deps) {
     if (!foot.near) { toast('The car is too far off to get into'); return; }
     onFoot = false;
     foot.letGo();
+    if (audio) audio.door(true);          // and the heavier one going the other way as he gets back in
     input.looking = false;
+    input.lookMode = 'orbit';
     camera.setMode('chase');
     camera.snap();
     gun.stow();
@@ -350,6 +472,7 @@ export function createGame(deps) {
     frame.reflectionOrigin[1] = shopRoom.probe[1];
     frame.reflectionOrigin[2] = shopRoom.probe[2];
     input.looking = true;
+    input.lookMode = 'neck';
     camera.setMode('free');
     camera.snap();
     shopSaid = '';
@@ -430,6 +553,9 @@ export function createGame(deps) {
   let waterTime = 0;
   let surroundingsTimer = 0;
   let hornOn = false;
+  /** The drivers currently sounding their horn at the player, so each is released when it gives up. */
+  const honkSounding = new Set();
+  const honkPlace = { position: null, listener: null, forward: null, kind: 'high' };
   let physicsMs = 0, gameMs = 0, streetSeconds = 0;
   // What the frame loop was actually handed, kept for `stats()`: a soak on a software renderer measures the
   // machine as much as the game, and the only way to tell "the walker is slow" from "this page got six frames
@@ -483,7 +609,14 @@ export function createGame(deps) {
     tyreWidths[2] = tyreWidths[3] = dims.tyreWidthRear;
     nitrous.setPipes(player.exhausts);
     frame.reflectionPlaneY = player.groundY;
-    if (audio) audio.setCar({ voice: carById(carId).voice, idle: spec.engine.idle, redline: spec.engine.redline });
+    if (audio) audio.setCar({ voice: drivenCar().voice, idle: spec.engine.idle, redline: spec.engine.redline });
+  }
+
+  /** The car the player is in, whether the garage sold it to him or he took it off the street. */
+  function drivenCar() {
+    if (stolenCar) return stolenCar;
+    const owned = carById(carId);
+    return { id: carId, name: owned.name, line: owned.line, voice: owned.voice };
   }
 
   /** The colour this car was left in, on the car and in the garage's swatches. */
@@ -534,6 +667,7 @@ export function createGame(deps) {
     skids.lift();
     old.dispose();
     carId = id;
+    stolenCar = null;   // the garage has handed him a car of his own again; whatever he took is behind him
     player = next;
     player.headlampMode = headlampMode;
     adoptPlayer();
@@ -755,6 +889,7 @@ export function createGame(deps) {
     placeCar(driveSpot.x, driveSpot.z, driveSpot.yaw || 0, false);
     input.driving = false;
     input.looking = true;
+    input.lookMode = 'orbit';            // the turntable: the car is what the finger moves
     departing = -1; departureFading = false;
     frame.spray = null; frame.exhaust = null;
     frame.room = showroom.room;
@@ -868,7 +1003,9 @@ export function createGame(deps) {
     // condition is that the car is nearly stopped, because a man stepping out of one at 40 m/s is a
     // casualty rather than a pedestrian.
     if (input.consume('foot') && driving) {
-      if (onFoot) climbIn();
+      // Whichever car his hand is on: his own, or one the street is holding out to him. foot.js has
+      // measured both by the same rule and said which was nearer, so this is a reading, not a guess.
+      if (onFoot) { if (foot.near && foot.near.tag === 'traffic') takeCar(); else climbIn(); }
       else if (Math.abs(player.forwardSpeed || 0) < 2.2) stepOut();
       else toast('Stop the car first');
     }
@@ -984,6 +1121,9 @@ export function createGame(deps) {
     car.gear = vehicle.gear; car.speed = vehicle.speed; car.slip = player.slip; car.slipAngle = player.slipAngle;
     car.brake = vehicle.brake; car.surface = player.surface; car.airborne = vehicle.airborne; car.wet = weather.wetness; car.boost = nitrous.flow;
     car.turbo = vehicle.turbo || 0;
+    // Where the car is, for the recorded engine: on foot, a car left idling fades and pans as the
+    // player walks away from it instead of following his head at full level.
+    car.position = player.pos;
     car.cabin = camera.mode === 'bonnet' ? 1 : 0;
     env.rain = weather.rain; env.wind = Math.hypot(weather.windX, weather.windZ); env.night = clock.env.night;
     env.timeOfDay = clock.timeOfDay; env.district = hud.district; env.neon = clock.env.switches.neon;
@@ -992,6 +1132,31 @@ export function createGame(deps) {
     if (police && audio.siren) audio.siren(phase.name === 'driving' ? police.siren.level : 0, police.siren.position);
     const horn = phase.name === 'driving' && input.state.horn > 0;
     if (horn !== hornOn) { hornOn = horn; audio.horn(horn); }
+    honkTraffic();
+  }
+
+  /**
+   * The cars the player has walked into the path of, sounding their horns at him. Each keeps its own
+   * horn until it gives up, and one that is not in this step's list is released: the audio caps how
+   * many sound at once, so a car that stops being blocked has to hand its voice back rather than leave
+   * it holding a place somebody nearer needs.
+   */
+  function honkTraffic() {
+    if (!audio || typeof audio.trafficHorn !== 'function') return;
+    const list = traffic.honking;
+    for (const id of honkSounding) {
+      let still = false;
+      for (let i = 0; i < list.length; i++) if (list[i].id === id) { still = true; break; }
+      if (!still) { audio.trafficHorn(id, false); honkSounding.delete(id); }
+    }
+    for (let i = 0; i < list.length; i++) {
+      const h = list[i];
+      honkPlace.position = h.position;
+      honkPlace.listener = camera.position;
+      honkPlace.forward = camera.forward;
+      honkPlace.kind = h.low ? 'low' : 'high';
+      if (audio.trafficHorn(h.id, true, honkPlace)) honkSounding.add(h.id);
+    }
   }
 
   // ------------------------------------------------------------------ public
@@ -1141,7 +1306,9 @@ export function createGame(deps) {
     setPaint(index) {
       const before = player.paintIndex;
       const applied = player.setPaint(index);
-      rememberPaint(settings, carId, applied);
+      // A car taken off the street is not his to remember a colour against: the garage's car would come
+      // back wearing whatever the stolen one was painted, and the street's car is not in the swatches.
+      if (!stolenCar) rememberPaint(settings, carId, applied);
       ui.setState({ paint: applied });
       if (applied !== before) {
         if (phase.name === 'garage') tellGarage('colour');
@@ -1371,10 +1538,14 @@ export function createGame(deps) {
         footIntent.crouch = controls.lookBack;
         footIntent.turn = simDt > 0 ? input.look.yaw / simDt : 0;
         footIntent.pitch = simDt > 0 ? input.look.pitch / simDt : 0;
+        // A car that is not his, if the street is holding one within reach. A man in a shop is not on
+        // the street and has nothing to take; anywhere else the nearest car that is nearly stopped is
+        // offered, and foot.js picks between it and his own by distance alone.
+        streetCar = !inShop ? traffic.nearestTo(foot.pos[0], foot.pos[2], BOARD_DISTANCE, BOARD_SPEED_LIMIT) : null;
         foot.step(simDt, footIntent, player.vehicle ? {
           x: player.pos[0], y: player.pos[1], z: player.pos[2],
           yaw: player.vehicle.yaw, speed: player.vehicle.speed,
-        } : null);
+        } : null, streetCar && streetCar.active ? streetCar : null);
         // The trigger is held, not tapped: the gun's own cooldown is what sets the rate, so a held Space
         // empties a machine pistol and taps a pistol one at a time with the same code.
         if (controls.handbrake > 0.5) pullTrigger(simDt); else gun.advance(simDt);
@@ -1414,6 +1585,15 @@ export function createGame(deps) {
         const p0 = now();
         if (steps > 0 && !inGarage) {
           traffic.setFocus(player, camera);
+          // A man standing in a lane is an obstacle the drivers brake for, which is what makes them
+          // stop instead of drifting past him; a man in a shop is not in the road at all. His own car
+          // stays an obstacle either way, and that is what setFocus has just described.
+          traffic.setWalker(onFoot && !inShop
+            ? {
+              active: true, x: foot.pos[0], z: foot.pos[2], yaw: foot.yaw,
+              vx: foot.vel[0], vz: foot.vel[2], crouching: foot.gait < 0,
+            }
+            : { active: false });
           traffic.step(stepTime);
         }
         physics.advance(steps, stepper.alpha);

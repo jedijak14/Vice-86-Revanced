@@ -63,7 +63,7 @@ The release ships a city with cars in it and nobody on the pavements. This is th
 | `web/src/core/animate.js` | Clip sampling and the rig solve, with the walk clock driven by metres travelled so nobody skates. |
 | `web/src/world/people/cast.js` | The cast: five rigged bodies from the vendored packs, one shared clip library, and a person as a mesh whose vertices are rewritten each frame. |
 | `web/src/game/wanted.js` | The wanted record: what each thing you did costs, how the stars ladder up, and how they cool off. |
-| `web/src/game/foot.js` | On foot: a third-person walker with a run, a crouch, a wind, and a car to climb back into. |
+| `web/src/game/foot.js` | On foot: a third-person walker with a run, a crouch, a wind, and a car to climb back into — his own, or the nearest one the street is holding out. |
 | `web/src/game/weapons.js` | The guns: magazines, a reload, hitscan fired against the crowd, and what a carried gun remembers. |
 | `web/src/game/shops.js` | Shopfronts: which lots have a door, what a bag costs, what a till holds, and when a hold-up is over. |
 | `web/src/game/shoproom.js` | The room behind a door: the set baked into the world at the lot's own yaw, with its lamps and its walls. |
@@ -73,6 +73,31 @@ The release ships a city with cars in it and nobody on the pavements. This is th
 | `web/src/game/game.js`, `game/hud.js`, `ui/*` | The HUD's three rows — the job, the race, the crew — the stars beside them, and `V` to take a race. |
 
 The details are in [docs/STREET-LIFE.md](docs/STREET-LIFE.md).
+
+## What was added for the road
+
+A street that drives through a man is a street with no cars in it, and a car you cannot take is scenery.
+
+| File | What it is |
+| --- | --- |
+| `web/src/game/drivers.js` | An obstacle now has a *kind*, and a driver reports why it braked (`avoidKind`, `avoidAccel`) — the only honest way to tell a man in the road from a wreck, because a car's own deceleration is the same for both. |
+| `web/src/game/traffic.js` | The player on foot is registered as an obstacle every simulated step, so a car stops for him rather than drifting past. A driver who had to brake hard for a man sounds his horn: the nearest four are reported to the audio, nearest first, and nothing about it allocates per step. A car he walks up to is handed over (`nearestTo`, `take`), and the car he left standing is put on the street as a parked vehicle of its own type (`adopt`), so it is still there when he walks back. |
+| `web/src/game/foot.js` | Measures the two cars within reach — his own and the street's — by one rule, and says which of them his hand is on. |
+| `web/src/game/wanted.js` | Three charges, because the three acts are not the same: `car stolen` (an empty car at the kerb), `car jacked` (somebody was sitting in it), `patrol car taken`. |
+
+Taking a car takes *that* car: it is rebuilt as the player's own in the same place, facing the same way,
+wearing the same paint, on the specification of its own kind — a bus taken off the street is eleven
+tonnes and geared like a bus, and it is heard on the engine its own 800 rpm implies.
+
+## What was added for the sound
+
+| File | What it is |
+| --- | --- |
+| `tools/make_audio.py` | The recordings, rendered offline from a physical model of each engine: firing pulses at their crank angles through a pipe's resonance, induction orders, valve lash, turbulence, a turbo's whistle, a V8's lope. Standard library only, deterministic from one seed, and it verifies its own loops are seamless. |
+| `web/assets/audio/` | 22 WAV files and a manifest with each file's bytes, hash, length, peak, reference rpm and seam measurement. |
+| `web/src/audio/samples.js` | Playback: three loops crossfaded by rpm, a cabin lowpass that opens with the revs, horns keyed by vehicle, one-shots for the starter, the shift, the door. What the browser plays is the file; nothing is synthesised at run time except as the fallback when the files are not there. |
+
+The details, and every number the recordings were made from, are in [docs/AUDIO.md](docs/AUDIO.md).
 
 ## Layout
 
@@ -87,6 +112,8 @@ tools/import_release.py    verifies the vendored bytes; refreshes them from the 
 tools/browser-check.mjs    headless boot and soak on SwiftShader
 test/                      Node tests for what this fork added
 docs/PALOMA-PD.md          the police, as built
+docs/AUDIO.md              the engine recordings, and the model they were rendered from
+tools/make_audio.py        renders them; standard library only, no dependencies
 ```
 
 ## Running it

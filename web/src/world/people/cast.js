@@ -170,7 +170,10 @@ async function buildCharacter(name, gltf, rig, decodeImage) {
     const rigid = !skinned;
     const rigidBone = rigid ? boneOfNode(gltf, node, rig) : -1;
     const base = positions.length / 3;
-    const m = rigid ? worlds.subarray(node * 16, node * 16 + 16) : null;
+    // The node matrix of a skinned mesh is applied to the base positions, as the glTF spec applies it
+    // to the skinned result: for the packs, whose skinned nodes are identity, this changes nothing, and
+    // for a quantized figure it is the only place its metre lives.
+    const m = worlds.subarray(node * 16, node * 16 + 16);
     const p = [0, 0, 0], d = [0, 0, 0];
     for (let v = 0; v < pos.count; v++) {
       if (m) {

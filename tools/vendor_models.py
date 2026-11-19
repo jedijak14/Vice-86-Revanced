@@ -540,9 +540,13 @@ def cmd_report(args):
         lines += ["No packs are vendored yet: `python3 tools/vendor_models.py --fetch <source>`.", ""]
     for p in doc["packs"]:
         m = read_manifest(p["pack"])
-        lines += ["## %s" % p["pack"], "",
-                  "- source: `%s` at `%s`" % (p["source"], p["ref"]),
-                  "- licence: **%s** (`%s` in the source repository)" % (p["licence"], m["licence"]["path"]),
+        # An asset the project owns rather than one fetched from a source has no repository to point at,
+        # and saying "None" where a source should be is not accounting.
+        where = ("- source: `%s` at `%s`" % (p["source"], p["ref"]) if p["source"]
+                 else "- source: this repository at `%s`" % p["ref"])
+        licence = ("- licence: **%s** (`%s` in the source repository)" % (p["licence"], m["licence"]["path"])
+                   if p["source"] else "- licence: **%s** (%s)" % (p["licence"], m["licence"]["path"]))
+        lines += ["## %s" % p["pack"], "", where, licence,
                   "- %d file(s), %.2f MB" % (p.get("fileCount", len(p["files"])), p["bytes"] / 1e6),
                   "- %s" % p["note"], "",
                   "| file | bytes | sha256 | from |", "| --- | ---: | --- | --- |"]

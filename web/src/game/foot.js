@@ -177,12 +177,16 @@ export function createFoot(deps = {}) {
 
     /**
      * One step. `intent` is the player's own wish, in the walker's frame; `car` is the player's car, for the
-     * one thing a pedestrian must never be — inside it and walking about at the same time.
+     * one thing a pedestrian must never be — inside it and walking about at the same time. `offer` is a car
+     * that is not his, held out by the street (game/traffic.js's `nearestTo`) for the same measurement: a
+     * man standing at somebody else's door is a man who is about to take it, and `near.tag` says which of
+     * the two it was.
      * @param {number} dt seconds
      * @param {{forward?: number, strafe?: number, run?: number, crouch?: number, turn?: number, pitch?: number}} intent
-     * @param {{x: number, z: number, yaw?: number, speed?: number}|null} [car]
+     * @param {{x: number, z: number, yaw?: number, speed?: number, tag?: string}|null} [car]
+     * @param {{x: number, z: number, yaw?: number, speed?: number, tag?: string}|null} [offer]
      */
-    step(dt, intent = {}, car = null) {
+    step(dt, intent = {}, car = null, offer = null) {
       const f = clamp(intent.forward || 0, -1, 1), s = clamp(intent.strafe || 0, -1, 1);
       const drive = Math.min(1, Math.hypot(f, s));
       const want = intent.run > 0.5 ? 1 : (intent.crouch > 0.5 ? -1 : 0);
@@ -263,15 +267,20 @@ export function createFoot(deps = {}) {
         if (wasAirborne) { foot.state = 'land'; foot.fall = 0; if (onLand) onLand(ground, hard); }
       }
       // What is beside him. Boarding is offered by the world rather than guessed at by the UI: the car has
-      // to be nearly stopped and he has to be at the door side, not under the wheels.
+      // to be nearly stopped and he has to be at the door side, not under the wheels. Two cars may be in
+      // reach -- the one he got out of, and one he is about to take off the street -- and his hand goes to
+      // the nearer of them, which is what `tag` says out loud to whoever reads it.
       foot.near = null;
-      if (car && Number.isFinite(car.x) && Number.isFinite(car.z)) {
-        const dx = foot.pos[0] - car.x, dz = foot.pos[2] - car.z;
+      let nearReach = BOARD_DISTANCE;
+      for (let which = 0; which < 2; which++) {
+        const c = which === 0 ? car : offer;
+        if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.z)) continue;
+        const dx = foot.pos[0] - c.x, dz = foot.pos[2] - c.z;
         const d = Math.hypot(dx, dz);
-        if (d < BOARD_DISTANCE && Math.abs(car.speed || 0) < BOARD_SPEED_LIMIT) {
-          const yaw = car.yaw || 0;
-          foot.near = { distance: d, side: Math.sin(yaw) * dx + Math.cos(yaw) * dz > 0 ? 1 : -1 };
-        }
+        if (d >= nearReach || Math.abs(c.speed || 0) >= BOARD_SPEED_LIMIT) continue;
+        const yaw = c.yaw || 0;
+        nearReach = d;
+        foot.near = { distance: d, side: Math.sin(yaw) * dx + Math.cos(yaw) * dz > 0 ? 1 : -1, tag: c.tag || 'own' };
       }
       // The gait describes the legs, the air describes the body: a man falling with the thumb forward is
       // falling, not walking, and one who has just landed is landing for exactly one frame.
@@ -301,7 +310,10 @@ export function createFoot(deps = {}) {
     /** The direction a bullet leaves from: the eye's own, not the feet's. */
     aim(target = [0, 0, 0]) {
       const c = Math.cos(foot.look.pitch);
-      target[0] = Math.sin(foot.look.yaw) * c; target[1] = -Math.sin(foot.look.pitch); target[2] = Math.cos(foot.look.yaw) * c;
+      // A positive pitch raises the eye, which is what the third-person camera does with the same number
+      // (it drops below the shoulder as the view climbs) -- so a bullet leaves *up* when the view looks up.
+      // The gun in game/weapons.js reads the identical sign off `look.pitch` for the same reason.
+      target[0] = Math.sin(foot.look.yaw) * c; target[1] = Math.sin(foot.look.pitch); target[2] = Math.cos(foot.look.yaw) * c;
       return target;
     },
     /**
@@ -315,7 +327,10 @@ export function createFoot(deps = {}) {
       const up = CAM_UP * scale + foot.pos[1] - land;
       if (physics && typeof physics.raycast === 'function') {
         const c = Math.cos(foot.look.pitch);
-        const bx = -Math.sin(foot.look.yaw) * c, by = Math.sin(foot.look.pitch), bz = -Math.cos(foot.look.yaw) * c;
+        // The way back along the *view*, which for a head is (−sin yaw·cos p, −sin p, −cos yaw·cos p):
+        // looking up (positive pitch) puts the camera under the chin, so the cast that looks for a wall
+        // has to go up-to-down, not down-to-up, or a shoulder camera clips straight through a facade.
+        const bx = -Math.sin(foot.look.yaw) * c, by = -Math.sin(foot.look.pitch), bz = -Math.cos(foot.look.yaw) * c;
         // The eye's own height, because that is where the eye is: a cast from the hip walks the camera
         // straight through a wall over its head. Low furniture is the price, and a shoulder camera that
         // ducked under every kerb would be worse than one that clips a bench.

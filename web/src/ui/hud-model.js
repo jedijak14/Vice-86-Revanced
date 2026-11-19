@@ -224,7 +224,9 @@ function footLine(foot) {
   if (!foot || !foot.onFoot) return '';
   const gun = foot.gun ? `${foot.gun} ${foot.magazine}/${foot.reserve}` : 'no gun \u00b7 B to draw';
   const wind = foot.out ? ' \u00b7 winded' : foot.stamina < 0.34 ? ' \u00b7 low wind' : '';
-  const near = foot.boarding ? ' \u00b7 F to get in' : (foot.near ? ' \u00b7 F to get out' : '');
+  // A car within reach says which car it is: his own is a door he left open, and one that is not his is
+  // a car he is about to take off the street, which the street will hold against him.
+  const near = foot.boarding ? (foot.taken ? ' \u00b7 F to take it' : ' \u00b7 F to get in') : (foot.near ? ' \u00b7 F to get out' : '');
   const door = foot.door ? ` \u00b7 ${foot.door}` : '';
   return `${gun}${wind}${near}${door}`;
 }

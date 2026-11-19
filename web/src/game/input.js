@@ -6,9 +6,13 @@
 // One-shot actions (reported once per press):  camera, headlamps, recover, time, weather,
 // pause.
 //
-// View input, in the garage only (`looking`): a drag with the mouse or a finger, the wheel or
-// a pinch, and the right stick, merged into `look`: this frame's turn of the view, in units
-// that do not depend on the device or the size of the window.
+// View input, while `looking`: a drag with the mouse or a finger, the wheel or a pinch, and the right
+// stick, merged into `look`: this frame's turn of the view, in units that do not depend on the device
+// or the size of the window. Two conventions share this pipe, and `lookMode` picks one: 'orbit' grabs
+// the car and spins it (the garage turntable, where the object follows the hand), 'neck' turns a head
+// (on foot, where the view goes the way the finger does). Feeding a man on the pavement the turntable's
+// signs is what makes walking feel inverted: the eyes go left, the feet follow them, and the world
+// turns against the hand.
 //
 // Nothing in here touches the DOM directly: the page passes an event target and a gamepad
 // getter, tests call the same handlers by hand.
@@ -150,12 +154,19 @@ export function createInput(opts = {}) {
     sensitivity: 1,
     /** Which device steered last: 'keyboard', 'gamepad', 'touch' or 'script'. */
     lastDevice: 'keyboard',
-    /** View input is gathered while true (the garage); otherwise `look` stays at rest. */
+    /** View input is gathered while true (the garage, the pavement, a shop); otherwise `look` stays at rest. */
     looking: false,
     /**
-     * This frame's turn of the view, refreshed by update(): yaw and pitch in radians (positive
-     * yaw moves the eye anticlockwise seen from above, positive pitch raises it), zoom a signed
-     * ratio (+0.1 = a tenth closer), held while a pointer is down on the picture.
+     * Whose view the pointers and the right stick are driving: 'orbit' (the default: the garage
+     * turntable, where dragging brings the *object* round) or 'neck' (on foot: dragging turns the
+     * head the way the hand goes, up raises the eye). `game.js` sets it when the player steps out.
+     */
+    lookMode: 'orbit',
+    /**
+     * This frame's turn of the view, refreshed by update(): yaw and pitch in radians (a positive
+     * yaw turns the view towards +X, which is right for a walker facing +Z; a positive pitch raises
+     * the eye), zoom a signed ratio (+0.1 = a tenth closer), held while a pointer is down on the picture.
+     * Which *hand movement* produces a positive yaw is `lookMode`'s business, not the consumer's.
      */
     look: { yaw: 0, pitch: 0, zoom: 0, held: false },
 
@@ -176,10 +187,18 @@ export function createInput(opts = {}) {
       }
       const scale = LOOK_DRAG / Math.max(1, height);
       if (pointers.size === 1) {
-        // The picture follows the hand: dragging right brings the car's left side round,
-        // which is the eye going the other way; dragging down looks from higher up.
-        turned.yaw -= (x - last.x) * scale;
-        turned.pitch += (y - last.y) * scale;
+        const dx = (x - last.x) * scale, dy = (y - last.y) * scale;
+        if (api.lookMode === 'neck') {
+          // A head, not a turntable: dragging right looks right and dragging up raises the eye. This is
+          // the whole difference between a man walking where he is looking and a man walking circles.
+          turned.yaw += dx;
+          turned.pitch -= dy;
+        } else {
+          // The picture follows the hand: dragging right brings the car's left side round,
+          // which is the eye going the other way; dragging down looks from higher up.
+          turned.yaw -= dx;
+          turned.pitch += dy;
+        }
       } else {
         // A pinch: the change of the distance to the other finger.
         for (const [otherId, other] of pointers) {
@@ -250,7 +269,11 @@ export function createInput(opts = {}) {
       pollGamepad();
       const look = api.look;
       if (api.looking) {
-        look.yaw = turned.yaw - pad.lookX * LOOK_STICK_YAW * dt;
+        // The stick's yaw follows the drag: a turntable is spun against the hand, a neck turns with it.
+        // The pitch is the same either way, because raising the stick raises the eye in both frames --
+        // an orbit's camera goes up, a head looks up.
+        const spin = api.lookMode === 'neck' ? 1 : -1;
+        look.yaw = turned.yaw + spin * pad.lookX * LOOK_STICK_YAW * dt;
         look.pitch = turned.pitch - pad.lookY * LOOK_STICK_PITCH * dt;
         look.zoom = clamp(turned.zoom, -LOOK_WHEEL_LIMIT, LOOK_WHEEL_LIMIT);
         look.held = pointers.size > 0 || pad.lookX !== 0 || pad.lookY !== 0;
@@ -337,8 +360,8 @@ export function createInput(opts = {}) {
     pad.brake = shapeAxis(buttons[PAD_BRAKE].value, TRIGGER_DEAD_ZONE, BRAKE_CURVE);
     // Stick right is positive on the pad; steering left is positive in the game.
     pad.steer = -shapeAxis(activePad.axes[PAD_STEER_AXIS] || 0, STICK_DEAD_ZONE, STICK_CURVE);
-    // Right stick: right is positive, down is positive. Pushing it right swings the eye to the right
-    // (clockwise seen from above), pushing it up raises the eye.
+    // Right stick: right is positive, down is positive. Which way the *view* answers is `lookMode`'s
+    // business (see update()): a neck turns right and looks up; a turntable swings the car the other way.
     pad.lookX = shapeAxis(activePad.axes[PAD_LOOK_X] || 0, STICK_DEAD_ZONE, STICK_CURVE);
     pad.lookY = shapeAxis(activePad.axes[PAD_LOOK_Y] || 0, STICK_DEAD_ZONE, STICK_CURVE);
     pad.handbrake = 0; pad.boost = 0; pad.lookBack = 0; pad.horn = 0;
