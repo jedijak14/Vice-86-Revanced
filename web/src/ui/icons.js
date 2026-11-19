@@ -50,7 +50,10 @@ const PATHS = {
   jobs: 'M6.4 3.4h11.2v17.2l-2.8-2-2.8 2-2.8-2-2.8 2ZM9.4 8h5.2M9.4 11.8h5.2',
   radio: 'M4.2 9.6h15.6v10.2H4.2ZM8.6 9.6 16.4 3.8M7.2 12.6h4.4M7.2 15.4h3.2M14.6 14.7a2.1 2.1 0 1 0 0 .1Z',
   pulse: 'M2.8 12.4h4l2.4-5.6 3.4 10.4 2.4-4.8h6.2',
-  camera: 'M3.4 7.6h11.2v7.2H3.4ZM14.6 10.2l6-2.5v7l-6-2.5ZM9 14.8v3.6M6.2 18.4h5.6',
+  // A camera on a stand: the lens that has you, for the row that says who is watching. This was a second
+  // `camera` in the same object, and a duplicate key is a drawing thrown away — the one above (the still
+  // camera, drawn for the touch controls) was silently unreachable under the name it was written for.
+  lens: 'M3.4 7.6h11.2v7.2H3.4ZM14.6 10.2l6-2.5v7l-6-2.5ZM9 14.8v3.6M6.2 18.4h5.6',
   lock: 'M6.8 10.6h10.4v9.6H6.8ZM9.4 10.6V8.2a2.6 2.6 0 0 1 5.2 0v2.4M12 14.2v2.6',
   voice: 'M3.6 5.4h16.8v10.2H12.6l-4.8 4.2v-4.2H3.6ZM7.4 9.2h9.2M7.4 12h6.4',
   drop: 'M12 3.6c3.2 4 5.4 6.9 5.4 9.7a5.4 5.4 0 0 1-10.8 0c0-2.8 2.2-5.7 5.4-9.7Z',

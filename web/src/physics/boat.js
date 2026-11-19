@@ -67,7 +67,8 @@ export function createBoat(spec, at = {}) {
   // Rotational masses of a hull: I = m * (k * L)^2, with the radii of gyration a boat actually has.
   const Ipitch = m * Math.pow(0.28 * spec.length, 2);
   const Iroll = m * Math.pow(0.38 * spec.beam, 2);
-  const Iyaw = m * Math.pow(0.3 * spec.length, 2);
+  // There is no yaw inertia to match: a hull's heading is a rate the rudder sets against the flow (see
+  // the yaw below), not a moment divided by a mass, so only the two that are divided by anything are here.
 
   const boat = {
     spec,

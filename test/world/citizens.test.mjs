@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 
 import { Gltf } from '../../web/src/core/gltf.js';
 import { Rig } from '../../web/src/core/animate.js';
-import { buildCitizen, buildCitizens } from '../../web/src/world/people/citizens.js';
+import { buildCitizen, buildCitizens, splitShelf } from '../../web/src/world/people/citizens.js';
 
 const b = readFileSync(new URL('../../web/assets/models/kaykit-adventures/Rogue.glb', import.meta.url));
 const gltf = new Gltf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -74,4 +74,25 @@ test('the sway mask: hair a full one, cloth a half, and every vertex accounted f
   const hairy = shelf.find((r) => r.sway.some((m) => m === 1));
   assert.ok(hairy, 'somebody on the shelf has hair that moves');
   assert.ok(shelf.every((r) => r.sway.some((m) => m > 0)), 'and nobody is welded solid');
+});
+
+test('the shelf is split into the police and everybody else, by index, and the split can be run', () => {
+  // This is the seam the game loads its people through: ten citizens and two officers on one shelf, and
+  // two lists of indices saying which is which. It is here rather than inline in the cast loader because
+  // inline it was written as `.filter((i) >= 0)` -- a comparison where an arrow function belongs, and a
+  // ReferenceError at runtime. It threw inside a promise, the promise's own catch reported "the street
+  // could not load its people", and the game carried on with nobody on the pavement and no body for the
+  // player to walk about in. Nothing a browser shows you; everything a test does.
+  const shelf = buildCitizens(base, { citizens: 10, officers: 2, seed: 9 });
+  assert.equal(shelf.length, 12, 'the shelf is the twelve it was asked for');
+  const { officers, citizens } = splitShelf(shelf);
+  assert.deepEqual(officers, [10, 11], 'the officers are the two at the end, where buildCitizens puts them');
+  assert.deepEqual(citizens, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 'and everybody before them is a passer-by');
+  for (const i of officers) assert.ok(shelf[i].police, `index ${i} really is wearing a uniform`);
+  for (const i of citizens) assert.ok(!shelf[i].police, `and index ${i} really is not`);
+  assert.equal(officers.length + citizens.length, shelf.length, 'nobody is lost between the two lists');
+  // An empty shelf and a shelf of nobody are both a pair of empty lists, not a throw: the cast is a
+  // download, and a street that has not finished loading is a street with nobody on it yet.
+  assert.deepEqual(splitShelf([]), { officers: [], citizens: [] });
+  assert.deepEqual(splitShelf(null), { officers: [], citizens: [] });
 });

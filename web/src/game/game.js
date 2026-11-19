@@ -35,14 +35,14 @@ import { createPlayer } from './player.js';
 import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
 import { createCrowd, PEOPLE_BY_TIER } from './crowd.js';
-import { createFoot, BOARD_DISTANCE, BOARD_SPEED_LIMIT } from './foot.js';
+import { createFoot, walkIntent, BOARD_DISTANCE, BOARD_SPEED_LIMIT } from './foot.js';
 import { createVitals } from './vitals.js';
-import { createBoarding, awayFromCar, SEAMS } from './boarding.js';
+import { createBoarding, awayFromCar, seatFor, SEAMS } from './boarding.js';
 import { createBoats } from './boats.js';
-import { createPlanes, planeInstruments, writeMatrix as writePlaneMatrix, BOARD_REACH as PLANE_REACH } from './planes.js';
+import { createPlanes, planeInstruments, BOARD_REACH as PLANE_REACH } from './planes.js';
 import { createBikes, bikeInstruments, writeMatrix as writeBikeMatrix, RIDER_HIP } from './bikes.js';
 import { basisFromAttitude } from '../physics/plane.js';
-import { buildCitizens } from '../world/people/citizens.js';
+import { buildCitizens, splitShelf } from '../world/people/citizens.js';
 import { createRadio } from '../audio/radio.js';
 import { setSway } from '../world/people/cast.js';
 import { createVoice } from '../audio/voice.js';
@@ -88,8 +88,6 @@ const HEADLAMP_LABELS = { auto: 'Headlamps: automatic', on: 'Headlamps: on', off
 const TITLE_INPUT = Object.freeze({ throttle: 0, brake: 0, steer: 0, handbrake: 1 });
 /** Afoot, the car is left exactly as its driver left it: no throttle, no steering, handbrake up. */
 const PARKED_INPUT = TITLE_INPUT;
-/** Metres under the street's own level that a walker is in the sea rather than on the shore. */
-const DEEP_WATER = 1.2;
 
 /**
  * The engine a car taken off the street is heard with. The recordings are of four engines (docs/AUDIO.md)
@@ -194,10 +192,9 @@ export function createGame(deps) {
   // pavement is, the plan says where the carriageway ends, and the dispatch says what it saw. With
   // no road network there is nobody to walk and nothing to be wanted for.
   const wanted = new WantedLedger();
-  let lastHeat = 0, shownStars = 0, spedFor = 0, redChecked = -1;
+  let lastHeat = 0, shownStars = 0, spedFor = 0;
   /** Where the red-light check has already been done on this lap of the approach. */
   let redLaneId = -1, redAt = -1;
-  const approach = [0, 0, 0];
   const crowd = createCrowd({
     graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y, quality: settings.graphics.preset,
     // A person driven at off the kerb is an offence, and the only witness is the crowd itself.
@@ -233,8 +230,9 @@ export function createGame(deps) {
       // skeleton (world/people/citizens.js), so every clip the street owns still fits them. Officers
       // go last on the shelf, so their indices stay put while the crowd counts.
       const shelf = buildCitizens(cast.characters[0], { citizens: 10, officers: 2, seed: 9 });
-      officerChars = shelf.map((c, i) => (c.police ? i : -1)).filter((i) >= 0);
-      citizenChars = shelf.map((c, i) => (c.police ? -1 : i)).filter((i) => i >= 0);
+      const split = splitShelf(shelf);
+      officerChars = split.officers;
+      citizenChars = split.citizens;
       cast.characters = shelf;
       crowd.setCast(cast); footCast = cast; if (onFoot) foot.attach(cast, renderer);
     }
@@ -353,7 +351,7 @@ export function createGame(deps) {
       const seen0 = crowd.frighten(origin[0], origin[2], WITNESS_RADIUS, 1);
       if (crime('shots fired', struck.length ? 2.2 : 1.5, origin[0], origin[2])) {
         if (seen0 > 0) bark('shots', (origin[0] | 0) % 2 ? 'f' : 'm', origin[0], origin[2], (origin[2] | 0) + 11, 'a witness');
-        toast(seen > 2 ? `Shots fired \u00b7 ${seen} witnesses \u00b7 ${WantedLedger.label(wanted.stars)}` : 'Shots fired');
+        toast(seen0 > 2 ? `Shots fired \u00b7 ${seen0} witnesses \u00b7 ${WantedLedger.label(wanted.stars)}` : 'Shots fired');
       }
     },
     onHit: (info) => {
@@ -391,9 +389,10 @@ export function createGame(deps) {
   /** Out of the car, at the door side, on the ground beside it, looking along the street. */
   function stepOut() {
     const p = player.pos, yaw = player.vehicle ? player.vehicle.yaw : 0;
-    // 1.35 m of door, shoulder and mirror along the car's own right, which is the side that faces the
-    // pavement in a country that drives on the right. A man put down at the centre of the car is a man
-    // standing in the engine, and the world's first ray is the car's own body.
+    // 1.35 m of door, shoulder and mirror along the car's own left, (cos yaw, -sin yaw): the driver's
+    // side, because every car here is left-hand drive, and the side an officer walks to when he gets out
+    // at a stop. A man put down at the centre of the car is a man standing in the engine, and the world's
+    // first ray is the car's own body.
     foot.place(p[0] + Math.cos(yaw) * 1.35, p[1] + 0.05, p[2] - Math.sin(yaw) * 1.35, yaw);
     foot.look.yaw = yaw; foot.look.pitch = -0.05;
     foot.stamina = 1;
@@ -632,7 +631,6 @@ export function createGame(deps) {
     const entry = planes && planes.get(boardPlane);
     if (!entry) { toast('It is not there any more'); return; }
     planeDriven = entry.id;
-    const p = entry.plane;
     onFoot = false;
     foot.letGo();
     gun.stow();
@@ -2068,10 +2066,7 @@ export function createGame(deps) {
         // the picture is the neck, and Shift is the run: nothing here is remapped, because a pedestrian who
         // had to learn new keys would be a mode rather than the same street with a man in it.
         player.drive(PARKED_INPUT, 0);
-        footIntent.forward = controls.throttle - controls.brake;
-        footIntent.strafe = -controls.steer;
-        footIntent.run = controls.boost;
-        footIntent.crouch = controls.lookBack;
+        walkIntent(controls, footIntent);
         footIntent.turn = simDt > 0 ? input.look.yaw / simDt : 0;
         footIntent.pitch = simDt > 0 ? input.look.pitch / simDt : 0;
         // A man in a cell has no legs to speak of: the yard owns him until a door opens.
@@ -2142,23 +2137,12 @@ export function createGame(deps) {
                   : boardTag === 'bike' && bikes && bikes.get(boardBike) ? bikes.get(boardBike).bike : null;
             const cyaw = c ? c.yaw : (player.vehicle ? player.vehicle.yaw : 0);
             const cx = c ? c.pos[0] : player.pos[0], cz = c ? c.pos[2] : player.pos[2];
-            // Across the machine and along it, in the world's own frame. `rgt` is the body's lateral
-            // axis — the one basisFromAttitude calls `lateral` and a positive roll banks about, which on
-            // a map whose +Z is south is the machine's left side — and the offsets below were tuned
-            // against it, so a sign here is a seat on the other side of the cabin.
-            const rgt = [Math.cos(cyaw), -Math.sin(cyaw)];
-            const fwd = [Math.sin(cyaw), Math.cos(cyaw)];
-            // Where the body ends up: a gunwale, the left seat of a cockpit two rows back from the panel,
-            // a saddle on the centreline, or a car's driver's seat. Each is the place the machine actually
-            // has, and the aeroplane's is on the same side as the door he climbed in through and will
-            // climb out of, because a light aeroplane's pilot sits on the left.
-            const seat = boardTag === 'boat'
-              ? [cx - fwd[0] * 0.6, cz - fwd[2] * 0.6]
-              : boardTag === 'plane'
-                ? [cx + rgt[0] * 0.42 + fwd[0] * 1.4, cz + rgt[1] * 0.42 + fwd[2] * 1.4]
-                : boardTag === 'bike'
-                  ? [cx - fwd[0] * 0.1, cz - fwd[2] * 0.1]
-                  : [cx - rgt[0] * 0.42 + fwd[0] * 0.08, cz - rgt[1] * 0.42 + fwd[2] * 0.08];
+            // Where the body ends up is boarding.js's business: the driver's seat is on the car's left
+            // because every car here is left-hand drive and furnished that way, the pilot's is on the
+            // left because that is the seat and the door, and a saddle is on the centreline. The player's
+            // own car says where its driver's eye is; a car taken off the street has no model to ask.
+            const seat = seatFor(boardTag, cx, cz, cyaw,
+              boardTag === 'own' && player.model && player.model.anchors ? player.model.anchors.driverEye : null);
             const dx = foot.pos[0] - cx, dz = foot.pos[2] - cz;
             const dl = Math.hypot(dx, dz) || 1;
             boardArc = {

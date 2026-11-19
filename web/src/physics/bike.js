@@ -18,7 +18,7 @@
 // renderQuat, step(dt, input), plus the rpm and gear an engine sound and a tachometer read.
 
 import { clamp } from '../core/math.js';
-import { quatFromAttitude } from './plane.js';
+import { basisFromAttitude, quatFromAttitude } from './plane.js';
 
 const scratchQuat = [0, 0, 0, 1];
 
@@ -83,6 +83,9 @@ export function createBike(spec, at = {}) {
   // The aeroplane's axis names, because it is the aeroplane's convention: +X is the machine's port side
   // on a map whose +Z is south, a positive lean puts that side down, and a positive yaw turns that way.
   const axes = { forward: [0, 0, 1], lateral: [1, 0, 0], up: [0, 1, 0] };
+  // The saddle's own basis and place, so asking where the seat is sixty times a second allocates nothing.
+  const seatBasis = { forward: axes.forward, lateral: axes.lateral, up: axes.up };
+  const seatAt = [0, 0, 0];
   let fuel = spec.tank;
 
   const bike = {
@@ -116,8 +119,18 @@ export function createBike(spec, at = {}) {
     get renderQuat() { return quatFromAttitude(bike.yaw, bike.pitch, bike.lean, scratchQuat); },
     /** Where the seat is, for a body that has to sit on it rather than inside a cabin. */
     get seatPos() {
-      const f = axes.forward;
-      return [bike.pos[0] - f[0] * spec.wheelbase * 0.12, bike.pos[1] + spec.seat, bike.pos[2] - f[2] * spec.wheelbase * 0.12];
+      // The saddle is a point on the machine, so it goes where the machine's own attitude puts it — and
+      // `axes` is the heading alone, which is why this asks for the full basis. A seat 0.79 m up leaned
+      // over thirty degrees is 0.4 m of saddle to the inside of the corner and 0.1 m lower than an upright
+      // one, and a rider put where the upright bike would have had him hangs off the outside of the
+      // machine he is actually sitting on: the same give-away as a body that will not lean, only arrived
+      // at from the other end, and the reason the lean has to be in the position and not only the pose.
+      const b = basisFromAttitude(bike.yaw, bike.pitch, bike.lean, seatBasis);
+      const along = -spec.wheelbase * 0.12;               // a saddle sits behind the middle of the wheelbase
+      seatAt[0] = bike.pos[0] + b.forward[0] * along + b.up[0] * spec.seat;
+      seatAt[1] = bike.pos[1] + b.forward[1] * along + b.up[1] * spec.seat;
+      seatAt[2] = bike.pos[2] + b.forward[2] * along + b.up[2] * spec.seat;
+      return seatAt;
     },
 
     place(x, y, z, yaw = 0) {

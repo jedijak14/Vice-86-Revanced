@@ -117,7 +117,7 @@ function buildRows(doc) {
     flight: build('flight', 'plane', 'Instruments'),
     vitals: build('vitals', 'pulse', 'Vitals'),
     radio: build('radio', 'radio', 'Radio'),
-    watch: build('watch', 'camera', 'Eyes'),
+    watch: build('watch', 'lens', 'Eyes'),
     jail: build('jail', 'lock', 'Custody'),
     voice: build('voice', 'voice', 'Street'),
     root: null,

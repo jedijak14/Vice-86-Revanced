@@ -219,3 +219,22 @@ export function buildCitizens(base, opts = {}) {
   return out;
 }
 
+/**
+ * Which of a shelf's characters are the police, by index: `{ officers, citizens }`.
+ *
+ * The crowd is handed the whole shelf and told which indices it may dress as a passer-by and which it must
+ * keep for an officer, because an officer's uniform is a character of its own and a pavement of policemen
+ * is a riot. It lives here rather than inline in the game's cast loader so that it can be run by a test:
+ * a filter written as `(i) >= 0` instead of `(i) => i >= 0` is not a typo a reader catches, it is a
+ * ReferenceError thrown inside a promise, caught by that promise's own handler, and reported as "the
+ * street could not load its people" — which is a game with nobody on the pavement and no body to walk
+ * about in, from a single dropped arrow.
+ * @param {Array<{police?: boolean}>} shelf  from `buildCitizens`
+ * @returns {{officers: number[], citizens: number[]}} indices into `shelf`
+ */
+export function splitShelf(shelf) {
+  const officers = [], citizens = [];
+  (shelf || []).forEach((c, i) => (c && c.police ? officers : citizens).push(i));
+  return { officers, citizens };
+}
+

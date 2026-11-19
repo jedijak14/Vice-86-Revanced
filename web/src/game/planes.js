@@ -41,9 +41,11 @@ const LIVERIES = Object.freeze({
 });
 /**
  * The shape each airframe wears: where the wing sits, how far it is swept, what hangs off it and how
- * tall the tail is. Metres, in the body's own frame (+Z the nose, +X the port wing, +Y up).
+ * tall the tail is. Metres, in the body's own frame (+Z the nose, +X the port wing, +Y up). Exported
+ * because a mesh is only as honest as the numbers it was built from, and a test that asserts a propeller
+ * is the diameter `propR` says has to be able to read `propR`.
  */
-const SHAPES = Object.freeze({
+export const SHAPES = Object.freeze({
   trainer: {
     radius: 0.62, wingY: 0.62, wingZ: 0.35, chord: 1.5, thickness: 0.16, sweep: 0.1, taper: 0.62,
     dihedral: 0.06, tailSpan: 3.3, tailChord: 0.95, finH: 1.5, finChord: 1.5, engine: 'prop',
@@ -290,8 +292,12 @@ export function buildPlaneMesh(spec, shape, livery = LIVERIES.vice) {
         }
       } else {
         const pz = z0 + len * 0.62;
+        // Two blades opposed about the nacelle's axis, built exactly as the nose spinner's pair is: the
+        // sign is what puts one above the hub and one below it. Without it the loop drew the same blade
+        // twice in the same place, so the twin turned a stub through its own cowl instead of a propeller
+        // — twice the vertices for one box, and a disc half the diameter it was sized for.
         for (const s of [-1, 1]) {
-          box(sk, dark, [off, nacelleY, pz + 0.05], [0.04, shape.propR * 0.5, 0.03], {});
+          box(sk, dark, [off, nacelleY + s * shape.propR * 0.55, pz + 0.05], [0.04, shape.propR * 0.5, 0.03], {});
         }
         disc(sk, dark, [off, nacelleY, pz], Z, X, Y, 0.16, 8);
       }

@@ -60,7 +60,6 @@ export function crowdByHour(hour) {
 }
 /** Whether the hour is one for standing at the kerb with your arm out. */
 export const isNightHour = (hour) => { const h = (((hour | 0) % 24) + 24) % 24; return h >= 22 || h < 7; };
-const HAIL_ODDS = HAIL_ODDS_DAY;
 /** The carriageway edge is behind you once the plan's distance is above this. */
 const KERB_A = 0.05;
 /** How far outboard to look for a pavement before giving up on that side of that lane, metres. */
@@ -154,11 +153,16 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   const carriageway = probe ? (x, z) => { plan.sample(x, z, probe); return probe.a || 0; } : null;
   const live = walkable.length > 0 && !!carriageway && !!renderer;
 
-  let density = 1, cap = 99, serial = 0;
+  let density = 1, serial = 0;
   const people = [], spare = [];
   const scratch = [0, 0, 0];
   const car = { x: 0, z: 0, y: 0, yaw: 0, speed: 0, hour: 12 };
-  let mark = -1, failed = false, qualityTier = quality;
+  let mark = -1, failed = false;
+  // How many bodies may be animated at once. It arrives by two roads and either one is enough: with the
+  // density the player asked for (`setDensity`), and with the graphics preset (`setQuality`), which is
+  // the one a slow device changes. Before the preset was asked for here it was only ever stored, so a
+  // device that dropped to Ultra Low mid-game kept animating every body it had already been given.
+  let cap = PEOPLE_BY_TIER[quality] ?? 99;
   const idlePeople = [];                       // built bodies, parked: see takePerson and handPersonBack
 
   /** The one mesh that is not a person: the card a hailer holds up. */
@@ -364,7 +368,7 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
       cast = next;
     },
     /** The quality tier, which is what decides how many bodies may be animated at once. */
-    setQuality(preset) { qualityTier = preset || 'medium'; },
+    setQuality(preset) { cap = PEOPLE_BY_TIER[preset || 'medium'] ?? cap; },
     density: 1,
     /** Placement attempts that found nowhere to walk: reported so that a street of a hundred lanes
      * holding four people is a number you can read, not a mystery (open land, a bridge, sea). */

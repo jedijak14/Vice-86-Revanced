@@ -41,6 +41,25 @@ export const SWIM_DEPTH = 0.62;
 const SWIM_DRAFT = 0.42, DIVE_DRAFT = 1.15;
 
 /**
+ * The walker's intent, read off the same controls the car is driven with: the pedals are his legs, the
+ * wheel is his strafe, the nitrous is his run and the look-back is his crouch. Nothing is remapped and no
+ * sign is turned over, because a pedestrian who had to learn new keys would be a mode rather than the same
+ * street with a man in it — and because every device this game reads already agrees about which way is
+ * left: the keys bind A to `left`, the stick's axis is negated on the way in, and the touch strip says so
+ * in its own header. A left on the wheel is a left on the pavement is a left in the driver's seat.
+ * @param {{throttle?: number, brake?: number, steer?: number, boost?: number, lookBack?: number}} controls
+ * @param {object} [out]  the intent to fill, so the frame does not allocate one sixty times a second
+ * @returns {{forward: number, strafe: number, run: number, crouch: number}} `out`
+ */
+export function walkIntent(controls, out = {}) {
+  out.forward = (controls.throttle || 0) - (controls.brake || 0);
+  out.strafe = controls.steer || 0;
+  out.run = controls.boost || 0;
+  out.crouch = controls.lookBack || 0;
+  return out;
+}
+
+/**
  * @param {{
  *   physics?: object,                 the world; only `raycast(origin, dir, maxDist, exclude)` is used
  *   crowd?: object,                   the street's people: `takePerson`/`handPersonBack` for the player's body
@@ -219,20 +238,28 @@ export function createFoot(deps = {}) {
         : foot.gait > 0 ? RUN_SPEED : foot.gait < 0 ? CROUCH_SPEED : WALK_SPEED;
       if (drive > 0.02) {
         // The feet turn towards the thumb, at a rate a person could manage: no instant spin, because a
-        // body that snaps round has no weight in it.
-        const want_yaw = foot.look.yaw + Math.atan2(s, f);   // atan2(right, forward) is the yaw the feet face
+        // body that snaps round has no weight in it. The thumb is a direction in the look's frame, so that
+        // is the frame the heading is asked for in, and atan2(across, forward) of it is the yaw it points
+        // at: a man walks the way he faces, and his feet are what catch up with the hand.
+        const want_yaw = foot.look.yaw + Math.atan2(s, f);
         const turn = clamp(angleDelta(foot.yaw, want_yaw), -10 * dt, 10 * dt);
         foot.yaw += turn;
         if (foot.yaw > Math.PI) foot.yaw -= TAU; else if (foot.yaw < -Math.PI) foot.yaw += TAU;
       }
-      const sin = Math.sin(foot.yaw), cos = Math.cos(foot.yaw);
+      // The renderer's own yaw convention (camera.js): `yaw 0` looks down +Z, and +X is to the LEFT of
+      // that, because +Z is south on this map and a man facing south has east on his left. Forward is
+      // (sin yaw, cos yaw) and the left hand is (cos yaw, -sin yaw) -- the same lateral axis a steering
+      // wheel sits on, an aeroplane banks about and a motorcycle leans about, so a step to the left is on
+      // the same side of the street as a driver's seat.
+      //
+      // He walks in the LOOK's frame and not in his feet's. The feet are turning towards the thumb, so
+      // reading the thumb again in the feet's own frame turns it twice: hold one key and the man faces the
+      // way he was asked and then walks off at a right angle to the hand that asked him, which is the
+      // circling this convention note exists to warn about.
+      const sin = Math.sin(foot.look.yaw), cos = Math.cos(foot.look.yaw);
       const wish = drive * speed;
-      // The renderer's own yaw convention (camera.js): `yaw 0` looks down +Z, and +X is to the right of
-      // that. Forward is (sin yaw, cos yaw) and the right hand (cos yaw, -sin yaw); get this wrong and the
-      // man walks in circles, because the body turns towards a heading the feet do not share.
       const mx = drive > 0.02 ? (sin * f + cos * s) / Math.hypot(f, s) * wish : 0;
       const mz = drive > 0.02 ? (cos * f - sin * s) / Math.hypot(f, s) * wish : 0;
-      void 0;
       // Walkers do not coast: the foot stops when the hand lets go, which is the difference between a
       // person and a shopping trolley.
       const blend = 1 - Math.exp(-14 * dt);
@@ -312,7 +339,11 @@ export function createFoot(deps = {}) {
         if (d >= nearReach || Math.abs(c.speed || 0) >= BOARD_SPEED_LIMIT) continue;
         const yaw = c.yaw || 0;
         nearReach = d;
-        foot.near = { distance: d, side: Math.sin(yaw) * dx + Math.cos(yaw) * dz > 0 ? 1 : -1, tag: c.tag || 'own' };
+        // Which side of the car he is standing on, +1 being its left: the dot of the offset with the
+        // body's lateral axis, (cos yaw, -sin yaw). Along the nose would say whether he is in front of
+        // the car or behind it, which is not a side, and a door is on a side — the ejected driver was
+        // coming out towards whichever end of the car the player happened to be standing past.
+        foot.near = { distance: d, side: Math.cos(yaw) * dx - Math.sin(yaw) * dz > 0 ? 1 : -1, tag: c.tag || 'own' };
       }
       // The gait describes the legs, the air describes the body: a man falling with the thumb forward is
       // falling, not walking, and one who has just landed is landing for exactly one frame.
