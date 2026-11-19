@@ -37,6 +37,12 @@ export const ARCHETYPES = Object.freeze(Object.fromEntries([
   A('gas_station', gasStation, 26, 44, 22, 34, 1, 1, 3.6, 3.6, 0.5, 'asphalt', [3, 1.5, 1.5], 3, { latin_quarter: 1, hotel_strip: 1, residential_poor: 1, downtown: 1 }),
   A('warehouse', warehouse, 22, 90, 18, 60, 1, 2, 2.5, 7.0, 1.5, 'concrete', [2, 1.2, 1.2], 3, { industrial_port: 10, residential_poor: 3, airport: 2, studio_island: 3, military: 4 }),
   A('hangar', hangar, 34, 80, 34, 70, 1, 1, 10, 10, 4, 'concrete', [5, 1.5, 1.5], 3, { airport: 8, military: 5 }),
+  // A gun store is a shopfront with a till behind a counter and a shelf of steel on it: the deco shop's
+  // room, sold as its own kind so the street knows what is in the drawer (game/shops.js).
+  A('gun_store', decoShop, 12, 30, 14, 30, 1, 1, 3.0, 4.0, 0.9, 'paved', [1.5, 0.15, 1.5], 2, { downtown: 3, industrial_port: 2, latin_quarter: 2, residential_poor: 1 }),
+  // A car dealership is a wide, low showroom on an asphalt forecourt: the strip mall's roof and glass,
+  // standing on the parking the forecourt is, with the cars on it to be bought or taken (game/shops.js).
+  A('dealership', stripMall, 34, 90, 30, 56, 1, 1, 4.4, 4.4, 0.8, 'asphalt', [2, 1, 2], 2, { downtown: 3, hotel_strip: 3, latin_quarter: 2, beach_resort: 2, artdeco_beach: 1 }),
 ]));
 
 /** Archetypes allowed in a district (id or style), heaviest first: [{ name, weight }]. */

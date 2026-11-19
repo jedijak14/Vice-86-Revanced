@@ -51,6 +51,7 @@ import { createWeapon, WITNESS_RADIUS } from './weapons.js';
 import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
 import { createRaces, TIERS as RACE_TIERS } from './races.js';
+import { createStoryline } from './storyline.js';
 import { createEffects } from './effects.js';
 import { createHudFeed } from './hud.js';
 import { ENGINE } from '../render/identity.js';
@@ -343,6 +344,13 @@ export function createGame(deps) {
     startingCash: 40,
   });
   purse.load();
+  // The storyline (game/storyline.js): jobs laid on the road graph, paid into the purse, heated on
+  // the ledger. A race is a loop with a flag; a job is a meeting at a kerb and a destination across
+  // the city, and which job comes next depends on which one was just finished.
+  const storyline = createStoryline({
+    graph, renderer, purse, wanted, seed: ((seed | 0) ^ 0x51ed) >>> 0, land: LAND_Y, notify: undefined,
+    toast: (text) => toast(text),
+  });
   let onFoot = false, footFirst = false, purseCash = purse.cash, purseAge = 99, purseDelta = 0;
   /** Where the last dry pavement was: the sea is a wall you can walk into and be sent back from. */
   const drySpot = [0, LAND_Y, 0];
@@ -2155,6 +2163,14 @@ export function createGame(deps) {
         stepOfficers(simDt);
         races.step(stepTime, playerPos2, phase.name === 'driving');
         hudStatus.race = races.snapshot();
+        // The story moves with the car: stand on a beacon and the job is yours, reach the marker and
+        // it pays. One beacon is raised and moved to whoever is being pointed at.
+        if (phase.name === 'driving') {
+          const hit = storyline.update(playerPos2[0], playerPos2[1]);
+          if (hit && hit.kind === 'offer' && !storyline.active) storyline.take(hit.offer);
+          storyline.beaconAt(playerPos2[0], playerPos2[1]);
+          hudStatus.mission = storyline.snapshot();
+        }
         // A race pays out of the money that was on the street before the flag, and the pocket is the only
         // place it can land: the ledger says what it came from, and the toast says how much. `paid` is on
         // the snapshot, so a finish that scored nothing is still closed off here rather than asked again.

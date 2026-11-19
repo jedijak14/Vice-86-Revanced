@@ -63,6 +63,9 @@ export const TILL_RANGE = Object.freeze({
   grocery: [240, 720],
   liquor: [140, 400],
   pawn: [300, 900],
+  diner: [120, 340],
+  gun: [400, 1200],
+  dealership: [600, 1800],
 });
 
 const clamp01 = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);

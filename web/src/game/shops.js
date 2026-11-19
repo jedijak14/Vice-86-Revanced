@@ -24,6 +24,8 @@ export const STOREFRONTS = Object.freeze({
   strip_mall: ['grocery', 'convenience', 'pawn'],
   diner: ['diner'],
   gas_station: ['convenience', 'diner'],
+  gun_store: ['gun'],
+  dealership: ['dealership'],
 });
 
 /**
@@ -56,6 +58,28 @@ export const SHOPS = Object.freeze({
   diner: {
     name: 'Chrome Diner', sign: 'OPEN ALL NIGHT', hours: [0, 24], price: 9, take: 0.26,
     goods: [{ label: 'breakfast, two eggs', cash: 9, wind: 1 }, { label: 'bottomless coffee', cash: 2, wind: 0.3 }],
+  },
+  // Gator Arms: the counter where a purse becomes a gun. The shelf is the weapon table the street
+  // already carries (game/weapons.js), priced so that the short .38 is an afternoon's takings and the
+  // rifle is a career of them.
+  gun: {
+    name: 'Gator Arms', sign: 'GUN SHOP \u00b7 OPEN 9-9', hours: [9, 21], price: 30, take: 0.6,
+    goods: [
+      { label: 'a box of shells', cash: 60, ammo: 24 },
+      { label: 'a short .38', cash: 340, weapon: 'pistol' },
+      { label: 'a 12-gauge', cash: 520, weapon: 'shotgun' },
+      { label: 'a machine pistol', cash: 940, weapon: 'smg' },
+    ],
+  },
+  // Sunshine Autos: a forecourt with the cars on it. The counter sells keys and paperwork; the cars
+  // themselves are parked on the asphalt and can simply be taken, which the street treats as the theft
+  // of a car that somebody was standing next to (game/game.js, the carjack).
+  dealership: {
+    name: 'Sunshine Autos', sign: 'NEW \u00b7 USED \u00b7 FORECOURT', hours: [8, 19], price: 40, take: 0.5,
+    goods: [
+      { label: 'the keys to the forecourt car', cash: 2400, wind: 1 },
+      { label: 'a can of wax', cash: 12, wind: 0.4 },
+    ],
   },
 });
 
