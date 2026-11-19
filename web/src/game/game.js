@@ -42,6 +42,7 @@ import { createBoats } from './boats.js';
 import { buildCitizens } from '../world/people/citizens.js';
 import { createRadio } from '../audio/radio.js';
 import { setSway } from '../world/people/cast.js';
+import { createVoice } from '../audio/voice.js';
 import { createWaterField } from '../physics/waterfield.js';
 import { createWaveSet, updateWaveSet, surfaceHeight } from '../render/sky/waves.js';
 import { createWitness } from './witness.js';
@@ -50,6 +51,7 @@ import { createWeapon, WITNESS_RADIUS } from './weapons.js';
 import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
 import { createRaces, TIERS as RACE_TIERS } from './races.js';
+import { createStoryline } from './storyline.js';
 import { createEffects } from './effects.js';
 import { createHudFeed } from './hud.js';
 import { ENGINE } from '../render/identity.js';
@@ -228,7 +230,8 @@ export function createGame(deps) {
       // skeleton (world/people/citizens.js), so every clip the street owns still fits them. Officers
       // go last on the shelf, so their indices stay put while the crowd counts.
       const shelf = buildCitizens(cast.characters[0], { citizens: 10, officers: 2, seed: 9 });
-      officerChars = shelf.map((c, i) => (c.police ? i : -1)).filter((i) => i >= 0);
+      officerChars = shelf.map((c, i) => (c.police ? i : -1)).filter((i) >= 0);
+      citizenChars = shelf.map((c, i) => (c.police ? -1 : i)).filter((i) => i >= 0);
       cast.characters = shelf;
       crowd.setCast(cast); footCast = cast; if (onFoot) foot.attach(cast, renderer);
     }
@@ -299,8 +302,11 @@ export function createGame(deps) {
   let boatDriven = -1;
   let boatNear = null;
   // The citizen shelf's officer indices, and the officers currently walking the player down.
-  let officerChars = [];
+  let officerChars = [], citizenChars = [];
   const officers = [];
+  // Thrown-out drivers: down on the road, up again, loud, and then coming after a car that is not
+  // moving fast enough to keep them from reaching the door.
+  const owners = [];
   const foot = createFoot({
     physics, land: LAND_Y, crowd,
     water: (x, z) => (typeof world.field === 'function' && world.field(x, z).kind === 'water' ? SEA_Y : null),
@@ -319,8 +325,9 @@ export function createGame(deps) {
     // muzzle, whoever was struck goes down on the pavement, and the ledger is told what it heard. What the
     // dispatch does about it is the dispatch's business, which is exactly why none of it is decided here.
     onShot: ({ origin, struck }) => {
-      const seen = crowd.frighten(origin[0], origin[2], WITNESS_RADIUS, 1);
+      const seen0 = crowd.frighten(origin[0], origin[2], WITNESS_RADIUS, 1);
       if (crime('shots fired', struck.length ? 2.2 : 1.5, origin[0], origin[2])) {
+        if (seen0 > 0) bark('shots', (origin[0] | 0) % 2 ? 'f' : 'm', origin[0], origin[2], (origin[2] | 0) + 11, 'a witness');
         toast(seen > 2 ? `Shots fired \u00b7 ${seen} witnesses \u00b7 ${WantedLedger.label(wanted.stars)}` : 'Shots fired');
       }
     },
@@ -337,6 +344,13 @@ export function createGame(deps) {
     startingCash: 40,
   });
   purse.load();
+  // The storyline (game/storyline.js): jobs laid on the road graph, paid into the purse, heated on
+  // the ledger. A race is a loop with a flag; a job is a meeting at a kerb and a destination across
+  // the city, and which job comes next depends on which one was just finished.
+  const storyline = createStoryline({
+    graph, renderer, purse, wanted, seed: ((seed | 0) ^ 0x51ed) >>> 0, land: LAND_Y, notify: undefined,
+    toast: (text) => toast(text),
+  });
   let onFoot = false, footFirst = false, purseCash = purse.cash, purseAge = 99, purseDelta = 0;
   /** Where the last dry pavement was: the sea is a wall you can walk into and be sent back from. */
   const drySpot = [0, LAND_Y, 0];
@@ -462,6 +476,27 @@ export function createGame(deps) {
     gun.stow();
     const seen = crime(taken.hadDriver ? 'car jacked' : 'car stolen', undefined, taken.x, taken.z);
     if (taken.hadDriver) crowd.frighten(taken.x, taken.z, 30, 1);
+    if (taken.hadDriver) {
+      // Whoever had eyes on it says what they saw, out loud, in their own voice: the witness bark is
+      // the street's alarm, and the two people standing closest to the kerb are the ones who raise it.
+      // An empty car taken off a kerb is theft, not a carjacking, and nobody screams at it.
+      if (crowd && crowd.people) {
+        const out = [0, 0, 0];
+        let n = 0;
+        for (let i = 0; i < crowd.people.length && n < 2; i++) {
+          const p = crowd.people[i];
+          if (!p || !p.person) continue;
+          crowd.at(p, out);
+          if (Math.hypot(out[0] - taken.x, out[2] - taken.z) > 18) continue;
+          const sex = p.person.character && p.person.character.sex === 'f' ? 'f' : 'm';
+          bark('carjack', sex, out[0], out[2], i * 31 + 7);
+          n++;
+        }
+      }
+      // And the man or woman landing on the asphalt as the car goes: they get up, they scream, and if
+      // the thief is slow they come after the door (stepOwners).
+      spawnOwner(taken.x, taken.z, taken.yaw || 0);
+    }
     toast(seen ? `${name} taken \u00b7 that was seen` : `${name} taken`);
   }
 
@@ -591,6 +626,71 @@ export function createGame(deps) {
    * the shore. Stars at zero and the officers go back to being pedestrians, because that is what they
    * are between shifts.
    */
+  /** The owner of a jacked car: down, up, screaming, and chasing a slow thief to the door. */
+  function stepOwners(dt) {
+    for (let i = owners.length - 1; i >= 0; i--) {
+      const o = owners[i];
+      o.t += dt;
+      const car = player.vehicle;
+      const cp = car ? car.pos : foot.pos;
+      const speed = car ? Math.abs(player.forwardSpeed || 0) : 0;
+      const ox = o.person.position[0], oz = o.person.position[2];
+      const d = Math.hypot(ox - cp[0], oz - cp[2]);
+      const done = () => { crowd.handPersonBack({ person: o.person }); owners.splice(i, 1); };
+      if (o.phase === 'down') {
+        if (o.t > 1.1) { o.phase = 'up'; o.person.role('standup', { once: true }); }
+      } else if (o.phase === 'up') {
+        if (o.t > 2.0) o.phase = 'loud';
+      } else if (o.phase === 'loud') {
+        if (!o.screamed) { o.screamed = true; bark('owner', o.sex, ox, oz, i * 17 + 5, 'the owner'); }
+        o.phase = speed < 4 && d < 32 ? 'chase' : 'wait';
+        if (o.phase === 'chase') o.person.role('run');
+      } else if (o.phase === 'wait') {
+        if (speed < 4 && d < 32) { o.phase = 'chase'; o.person.role('run'); }
+        else if (o.t > 12) { done(); continue; }
+      } else if (o.phase === 'chase') {
+        if (speed > 6 && d > 20) { o.phase = 'wait'; o.person.role('walk'); o.person.frame(dt, 1.2); continue; }
+        const dx = cp[0] - ox, dz = cp[2] - oz;
+        const dl = Math.hypot(dx, dz) || 1;
+        const nx = ox + (dx / dl) * 3.6 * dt, nz = oz + (dz / dl) * 3.6 * dt;
+        o.person.place(nx, groundHeight(nx, nz), nz, Math.atan2(dx, dz));
+        o.person.role('run');
+        o.person.frame(dt, 3.6);
+        if (dl < 1.7 && !onFoot && car) {
+          // Hands on the door, the man out of it, and the car back where the title says it is: the
+          // player lands on the asphalt and becomes an owner himself, so the roles simply swap.
+          const px = foot.pos[0], pz = foot.pos[2];
+          stepOut();
+          spawnOwner(px, pz, car.yaw);
+          toast('Thrown out - the owner got his car back');
+          wanted.add('car jacked', 1);
+          done();
+          continue;
+        }
+        if (o.t > 24) done();
+        continue;
+      }
+      if (o.phase !== 'chase') o.person.frame(dt, 0);
+    }
+  }
+
+  /**
+   * A driver on the road who was not driving out of it. Same body shelf as the crowd, parked in the
+   * `owners` list where `stepOwners` gets them up, makes them loud, and sends them after the door.
+   */
+  function spawnOwner(x, z, yaw) {
+    if (!crowd || !crowd.takePerson || !citizenChars.length) return null;
+    const ci = citizenChars[(Math.abs(x | 0) + owners.length * 7) % citizenChars.length];
+    const person = crowd.takePerson({ character: ci, wardrobe: 0, id: `owner${owners.length}` });
+    if (!person) return null;
+    const sx = x + Math.cos(yaw) * 1.35, sz = z - Math.sin(yaw) * 1.35;
+    person.place(sx, groundHeight(sx, sz), sz, yaw);
+    person.visible(true);
+    person.role('down');
+    owners.push({ person, t: 0, phase: 'down', screamed: false, sex: person.character.sex === 'f' ? 'f' : 'm' });
+    return owners[owners.length - 1];
+  }
+
   function stepOfficers(dt) {
     const want = wanted.stars > 0 && crowd && crowd.takePerson ? Math.min(3, wanted.stars + 1) : 0;
     while (officers.length < want && officerChars.length) {
@@ -726,6 +826,22 @@ export function createGame(deps) {
   const witness = createWitness({ shops: shops.list, lots: plan.lots || [], crowd, seed: 21 });
   // And what happens when the eyes that caught you belong to the department: a cell in the yard, a
   // bail figure priced from the stars, and two doors out of it (game/jail.js).
+  // The street's two voices, banked as files and positioned in the world (audio/voice.js).
+  const voice = createVoice({ context: () => (audio ? audio.context : null) });
+  let voiceSub = null, voiceUntil = 0, lastGreet = 0;
+  /** A line, said out loud at a place, and written under the cluster while it lasts. */
+  const bark = (context, gender, x, z, seed, who) => {
+    const said = voice.say(context, gender, {
+      x, z, seed,
+      lx: player.pos[0], lz: player.pos[2],
+      lyaw: onFoot ? foot.yaw : (player.vehicle ? player.vehicle.yaw : 0),
+    });
+    if (said && said.text) {
+      voiceSub = { text: said.text, who: who || (gender === 'f' ? 'a woman' : 'a man') };
+      voiceUntil = performance.now() + said.seconds * 1000 + 1400;
+    }
+    return said;
+  };
   const jail = createJail({
     purse, wanted, foot, camera, toast, plan,
     audio: { door: (heavy) => { if (audio) audio.door(heavy); } },
@@ -1989,6 +2105,21 @@ export function createGame(deps) {
         purseAge += simDt;
         hudStatus.purse = { cash: purse.cash, lastDelta: purseAge < 6 ? purseDelta : 0, lastAt: purseAge, best: purse.best };
         hudStatus.radio = radio.playing ? { station: radio.station.name, title: radio.title } : null;
+        if (audio && audio.ready && !voice.ready) voice.prime();
+        hudStatus.voice = voiceUntil > performance.now() ? voiceSub : null;
+        // A passer-by close enough to nod at, on a quiet pavement, every half minute or so.
+        if (onFoot && voice.ready && performance.now() - lastGreet > 26000 && crowd && crowd.people) {
+          const out = [0, 0, 0];
+          for (const p of crowd.people) {
+            if (!p || !p.person) continue;
+            crowd.at(p, out);
+            if (Math.hypot(out[0] - foot.pos[0], out[2] - foot.pos[2]) < 2.6) {
+              bark('greet', p.person.character.sex === 'f' ? 'f' : 'm', out[0], out[2], (out[0] | 0) * 7 + 3);
+              lastGreet = performance.now();
+              break;
+            }
+          }
+        }
         hudStatus.jail = jail.snapshot();
         const watch = witness.seen(player.pos[0], player.pos[2]);
         hudStatus.watch = watch.zone ? { kind: watch.zone.kind, camera: watch.camera, people: watch.people } : null;
@@ -2027,10 +2158,19 @@ export function createGame(deps) {
           }
           if (onFoot && foot.swimming) wake.splash(foot.pos[0], foot.pos[2], 0.9, -14 * simDt);
         }
+        if (owners.length) stepOwners(simDt);
         if (jail.jailed) jail.step(simDt, input.state.handbrake > 0.5);
         stepOfficers(simDt);
         races.step(stepTime, playerPos2, phase.name === 'driving');
         hudStatus.race = races.snapshot();
+        // The story moves with the car: stand on a beacon and the job is yours, reach the marker and
+        // it pays. One beacon is raised and moved to whoever is being pointed at.
+        if (phase.name === 'driving') {
+          const hit = storyline.update(playerPos2[0], playerPos2[1]);
+          if (hit && hit.kind === 'offer' && !storyline.active) storyline.take(hit.offer);
+          storyline.beaconAt(playerPos2[0], playerPos2[1]);
+          hudStatus.mission = storyline.snapshot();
+        }
         // A race pays out of the money that was on the street before the flag, and the pocket is the only
         // place it can land: the ledger says what it came from, and the toast says how much. `paid` is on
         // the snapshot, so a finish that scored nothing is still closed off here rather than asked again.

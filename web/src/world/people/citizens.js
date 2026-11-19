@@ -75,7 +75,10 @@ export function buildCitizen(base, seed, opts = {}) {
   const shoe = [0.10 + r() * 0.1, 0.10 + r() * 0.1, 0.11 + r() * 0.1];
   const hair = pick(r, HAIR);
   const style = police ? 'cap' : ['tee', 'jacket', 'tee', 'dress', 'tee', 'jacket'][Math.floor(r() * 6)];
-  const hairStyle = police ? 'cap' : ['short', 'short', 'long', 'bun', 'cap', 'none'][Math.floor(r() * 6)];
+  // The voice the street answers with is the body's own: dresses read feminine, and the rest of
+  // the shelf splits by the same draw that picked the face.
+  const sex = police ? (r() < 0.25 ? 'f' : 'm') : (style === 'dress' ? 'f' : (r() < 0.45 ? 'f' : 'm'));
+  const hairStyle = police ? 'cap' : (sex === 'f' ? ['short', 'long', 'long', 'bun', 'cap', 'none'][Math.floor(r() * 6)] : ['short', 'short', 'short', 'cap', 'none'][Math.floor(r() * 5)]);
 
   const positions = [], normals = [], colors = [], joints = [], weights = [], tris = [], sways = [];
   const b = { positions, normals, colors, joints, weights, tris };
@@ -199,7 +202,7 @@ export function buildCitizen(base, seed, opts = {}) {
     colors, joints: new Uint8Array(joints), weights: new Uint8Array(weights),
     triangles: Int32Array.from(tris), vertexCount: positions.length / 3, sway: Float32Array.from(sways),
     bounds, authored: base.authored, bodyHeight: base.authored, heightScale: 1,
-    police, citizen: true, style,
+    police, citizen: true, style, sex,
   };
 }
 

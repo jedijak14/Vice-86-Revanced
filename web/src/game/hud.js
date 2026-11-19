@@ -28,6 +28,10 @@ export function createHudFeed({ ui, world }) {
     net: null,
     purse: null,
     foot: null,
+    jail: null,
+    watch: null,
+    radio: null,
+    voice: null,
   };
   let districtTimer = 0;
   let metres = MAP_METRES;
@@ -82,6 +86,12 @@ export function createHudFeed({ ui, world }) {
       values.net = (status && status.net) || null;
       values.purse = (status && status.purse) || null;
       values.foot = (status && status.foot) || null;
+      // The rest of what the street writes: custody, the eyes on you, the dial, and the line
+      // somebody on the pavement is saying out loud (audio/voice.js).
+      values.jail = (status && status.jail) || null;
+      values.watch = (status && status.watch) || null;
+      values.radio = (status && status.radio) || null;
+      values.voice = (status && status.voice) || null;
       districtTimer -= dt;
       if (districtTimer <= 0) {
         districtTimer = DISTRICT_INTERVAL;
