@@ -321,11 +321,19 @@ export function createTraffic(deps) {
       const out = stopped && unit.distance < OFFICER_DEPLOY;
       const o = out ? acquireOfficer(unit) : unit.officer;
       if (!o) continue;
-      const cs = Math.cos(p.yaw), sn = Math.sin(p.yaw);
-      // Local +x is the car's left. At a stop the officer walks out to the player's driver's
-      // door; otherwise they make for the kerb side of their own car, facing along it.
-      const gx = 1.55, gz = -1.15;
+      // Two cars, two headings, and it matters which is which. Local +x is a car's left in both frames.
+      // Walking back is to the kerb side of the cruiser they got out of — its right, because this island
+      // drives on the right — so that turns on the cruiser's yaw. Walking out is to the door of the car
+      // they stopped, and the driver's door is on that car's left, so that turns on the player's yaw.
+      // Both offsets used to be rotated by the cruiser's heading, which put the officer somewhere off
+      // the player's door by as much as the two cars differed in angle — and at a traffic stop a cruiser
+      // is never parked exactly square behind the car it has pulled over, so it was always wrong.
       const idle = !out;
+      const cy = idle ? p.yaw : focus.yaw;
+      const cs = Math.cos(cy), sn = Math.sin(cy);
+      // 1.55 m outboard of the driver's door and 1.15 m behind it: clear of the sill, level with the
+      // quarter glass, where an officer stands so the driver cannot open the door into him.
+      const gx = 1.55, gz = -1.15;
       const tx = idle ? p.pos[0] - cs * 1.3 : focus.x + cs * gx + sn * gz;
       const tz = idle ? p.pos[2] + sn * 1.3 : focus.z - sn * gx + cs * gz;
       const dx = tx - o.x, dz = tz - o.z, d = Math.hypot(dx, dz);

@@ -236,31 +236,32 @@ export class Rig {
   /**
    * Compose the pose into node matrices, then into skinning matrices.
    * `height` scales the whole figure about its feet, because the packs are not all authored to the same
-   * metre, and a pedestrian who is 2.3 m tall on the pavement is a bug rather than a style.
+   * metre, and a pedestrian who is 2.3 m tall on the pavement is a bug rather than a style. It scales
+   * about the feet by scaling the heights about y = 0, which is where a pack puts the ground.
    */
-  solve(pose, out = this.bones, height = 1, footNode = 'hips') {
+  solve(pose, out = this.bones, height = 1) {
     const { gltf, parents, order, local, worlds } = this;
     const scaleFromFeet = height !== 1;
-    let footY = 0;
     for (const i of order) {
       const t = [pose.translation[i * 3], pose.translation[i * 3 + 1], pose.translation[i * 3 + 2]];
       const r = [pose.rotation[i * 4], pose.rotation[i * 4 + 1], pose.rotation[i * 4 + 2], pose.rotation[i * 4 + 3]];
       const s = [pose.scale[i * 3], pose.scale[i * 3 + 1], pose.scale[i * 3 + 2]];
       const p = parents[i];
-      if (scaleFromFeet) t[1] = t[1];                        // heights are applied below, on the way out
+      // Heights are not applied here, bone by bone: a figure is posed in its own authored metres and the
+      // scale goes on once, on the way out, where it cannot drift between a parent and its child.
       composeInto(local, t, r, s, gltf, i);
       if (p < 0) worlds.set(local, i * 16);
       else multiply(worlds, p * 16, local, 0, worlds, i * 16);
-      if (scaleFromFeet && i === this.node(footNode)) footY = worlds[i * 16 + 13] * height - worlds[i * 16 + 13];
     }
     for (let j = 0; j < this.joints.length; j++) {
       const node = this.joints[j];
       // Bone matrices are world × inverse bind: what a vertex weighted to this joint is multiplied by.
       multiply(worlds, node * 16, this.inverseBind, j * 16, out, j * 16);
-      if (scaleFromFeet) {
-        out[j * 16 + 13] *= height;                           // the y translation only: keep limbs rigid
-        out[j * 16 + 12] = out[j * 16 + 12];                  // (x and z are already the figure's own metres)
-      }
+      // The y translation only, so limbs stay rigid and only the figure's stature changes. No correction
+      // is owed for where the feet are: a pack's origin is the ground under it, so scaling the heights
+      // about y = 0 is scaling about the soles, which is what keeps a tall pedestrian standing on the
+      // pavement rather than an inch above it.
+      if (scaleFromFeet) out[j * 16 + 13] *= height;
     }
     return out;
   }

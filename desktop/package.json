@@ -1,7 +1,7 @@
 {
   "name": "vice-86-revanced",
   "productName": "Vice 86 Revanced",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "The street, in a window: the browser build of Vice 86 Revanced wrapped in Electron.",
   "main": "main.js",
   "private": true,

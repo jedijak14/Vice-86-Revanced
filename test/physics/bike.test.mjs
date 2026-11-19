@@ -252,3 +252,38 @@ test('the seat, the wheels and the ground agree about where the machine is', () 
   rollingBike.step(DT, { throttle: 0.4 });
   assert.ok(rollingBike.wheelSpin - spin > (rollingBike.speed / spec.wheelR) * DT * 0.9, 'the wheels turn at the speed the road is going past');
 });
+
+test('the saddle goes where the machine leans, and takes the rider with it', () => {
+  // A motorcycle is leaned over for most of the time it is interesting, and the rider is put where the
+  // saddle really is. The saddle is a point bolted to the frame, so the attitude carries it like it
+  // carries anything else: a seat 0.79 m above the origin, leaned thirty degrees to the left, is 0.4 m to
+  // the left of where an upright machine would have had it, and 0.1 m lower. A rider placed at the upright
+  // saddle hangs that far off the outside of the corner, which is the same give-away as a body that will
+  // not lean, only arrived at from the other end -- so the lean has to be in the position and not only in
+  // the pose.
+  const bike = standing('roadster'), spec = bike.spec;
+  const upright = bike.seatPos.slice();          // the getter hands back one array, so hold a copy of it
+  assert.ok(Math.abs(upright[0]) < 1e-9, 'an upright machine has its saddle on its own centreline');
+  assert.ok(Math.abs(upright[1] - (LAND + spec.seat)) < 1e-9,
+    `and ${spec.seat} m above the ground it is standing on, not above the world's own up`);
+  assert.ok(upright[2] < 0, 'a twelfth of a wheelbase behind the origin, which is where a saddle sits');
+
+  for (const deg of [15, 30, 45]) {
+    bike.lean = deg / DEG;
+    const b = basisFromAttitude(bike.yaw, bike.pitch, bike.lean);
+    const along = -spec.wheelbase * 0.12;
+    for (const axis of [0, 1, 2]) {
+      const want = bike.pos[axis] + b.forward[axis] * along + b.up[axis] * spec.seat;
+      assert.ok(Math.abs(bike.seatPos[axis] - want) < 1e-6,
+        `at ${deg} degrees over the saddle is along the machine's own up axis`);
+    }
+    assert.ok(bike.seatPos[0] > Math.sin(deg / DEG) * spec.seat * 0.95,
+      `${deg} degrees over to the left carries the saddle ${bike.seatPos[0].toFixed(2)} m to the left`);
+    assert.ok(bike.seatPos[1] < upright[1], 'and lowers it, the same length of seat leaning over');
+  }
+  // A positive lean is over to the left -- the sign the whole game steers by -- and +X is the machine's
+  // left at yaw zero on a map whose +Z is south. Lean the other way and the saddle goes the other way.
+  bike.lean = -30 / DEG;
+  assert.ok(bike.seatPos[0] < -Math.sin(30 / DEG) * spec.seat * 0.95,
+    `and over to the right takes it to ${bike.seatPos[0].toFixed(2)} m`);
+});

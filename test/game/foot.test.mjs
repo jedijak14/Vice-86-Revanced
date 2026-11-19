@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createFoot, WALK_SPEED, RUN_SPEED, BOARD_DISTANCE } from '../../web/src/game/foot.js';
+import { createFoot, walkIntent, WALK_SPEED, RUN_SPEED, BOARD_DISTANCE } from '../../web/src/game/foot.js';
 
 /**
  * A world of three things, all of them measured the way the game's own physics is measured: a ray that
@@ -91,6 +91,69 @@ test('a walker walks: the ground passes under him at walking speed, and the legs
   assert.ok(world.rays > 60, 'the walker did not ask the world whether the way was free');
   assert.equal(foot.state, 'walk');
   assert.equal(foot.pos[1], 0, `the street is flat for a metre and a half: he is at y=${foot.pos[1]}`);
+});
+
+test('the thumb to the left is a step to the left, and he faces the way he goes', () => {
+  // `strafe` arrives with the same sign the steering wheel uses, because a walker's left and a driver's
+  // left are the same side of the same street: input.js makes all three devices agree (A is bound to
+  // `left` and gives +1, the stick's axis is negated on the way in, and the touch strip documents itself
+  // as "positive = left (the car's +X)"). And on a map whose +Z is south, a man at yaw 0 faces south with
+  // east on his left, so his left hand is (cos yaw, -sin yaw) and a positive strafe is a step towards +X.
+  //
+  // It was handed over negated, and it was read again in the feet's own frame rather than the look's, so
+  // the two errors did not even cancel: A stepped him to his right, and then his feet turned to face the
+  // step and turned the thumb with them, walking him off at an angle to the key he was holding.
+  const left = createFoot({ physics: fakeWorld(), land: 0 });
+  left.place(0, 0, -2, 0);
+  march(left, 1 / 60, 60, { strafe: 1 });
+  assert.ok(left.pos[0] > WALK_SPEED * 0.5, `a left thumb carried him to x=${left.pos[0].toFixed(2)} m, and +X is his left`);
+  assert.ok(Math.abs(left.pos[2] + 2) < 0.25, `without walking him along the street to z=${left.pos[2].toFixed(2)}`);
+  // A quarter turn to the left is where his feet end up, and it is where he is going.
+  assert.ok(Math.abs(left.yaw - Math.PI / 2) < 0.05, `his feet came round to ${left.yaw.toFixed(2)} rad`);
+  const pace = Math.hypot(left.vel[0], left.vel[2]) || 1;
+  const along = (Math.sin(left.yaw) * left.vel[0] + Math.cos(left.yaw) * left.vel[2]) / pace;
+  assert.ok(along > 0.95, `and he is walking the way he is facing (${along.toFixed(2)} of it forwards)`);
+
+  const right = createFoot({ physics: fakeWorld(), land: 0 });
+  right.place(0, 0, -2, 0);
+  march(right, 1 / 60, 60, { strafe: -1 });
+  assert.ok(right.pos[0] < -WALK_SPEED * 0.5, `and the other thumb is the other way, to x=${right.pos[0].toFixed(2)} m`);
+  assert.ok(Math.abs(right.yaw + Math.PI / 2) < 0.05, `with his feet round to ${right.yaw.toFixed(2)} rad to match`);
+
+  // The look is the frame the thumb is read in, so turning the neck turns the walk: the same key held
+  // while he looks the other way is a step the other way in the world, and still to his own left.
+  const turned = createFoot({ physics: fakeWorld(), land: 0 });
+  turned.place(0, 0, -2, 0);
+  turned.look.yaw = Math.PI;                             // looking north, back the way he came
+  march(turned, 1 / 60, 60, { strafe: 1 });
+  assert.ok(turned.pos[0] < -WALK_SPEED * 0.5,
+    `facing north his left is west, and he went to x=${turned.pos[0].toFixed(2)} m`);
+});
+
+test('the walker is driven with the same controls as the car, and nothing is remapped on the way', () => {
+  // game.js hands the frame's controls straight to `walkIntent` and puts the result straight into the
+  // walker, so this is the whole chain from a key to a step: the pedals are the legs, the wheel is the
+  // strafe, the nitrous is the run and the look-back is the crouch. A pedestrian who had to learn new keys
+  // would be a mode rather than the same street with a man in it, and a sign turned over on the way is a
+  // man who steps right when he asks to step left.
+  assert.equal(walkIntent({ steer: 1 }).strafe, 1, 'a left on the wheel is a left on the pavement');
+  assert.equal(walkIntent({ steer: -1 }).strafe, -1, 'and a right is a right');
+  assert.equal(walkIntent({ throttle: 1 }).forward, 1, 'the throttle is a step forwards');
+  assert.equal(walkIntent({ brake: 1 }).forward, -1, 'and the brake is a step back');
+  assert.equal(walkIntent({ throttle: 1, brake: 1 }).forward, 0, 'both at once is standing still');
+  assert.equal(walkIntent({ boost: 1 }).run, 1, 'the nitrous is the run');
+  assert.equal(walkIntent({ lookBack: 1 }).crouch, 1, 'and the look-back is the crouch');
+  assert.deepEqual(walkIntent({}), { forward: 0, strafe: 0, run: 0, crouch: 0 }, 'no controls is standing still');
+  // The same intent, filled into the object the frame already holds, so nothing is allocated per step.
+  const held = { forward: 9, strafe: 9, run: 9, crouch: 9 };
+  assert.equal(walkIntent({ steer: 1 }, held), held, 'and it fills the intent it is given');
+  assert.equal(held.strafe, 1);
+
+  const keyed = createFoot({ physics: fakeWorld(), land: 0 });
+  keyed.place(0, 0, -2, 0);
+  march(keyed, 1 / 60, 60, walkIntent({ steer: 1, throttle: 0, brake: 0 }));
+  assert.ok(keyed.pos[0] > WALK_SPEED * 0.5,
+    `the A key walked him to x=${keyed.pos[0].toFixed(2)} m, which is the left of a man facing south`);
 });
 
 test('a wall is a wall, and a kerb is a step', () => {

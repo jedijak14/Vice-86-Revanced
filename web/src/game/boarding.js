@@ -163,7 +163,42 @@ export function createBoarding(deps = {}) {
   return board;
 }
 
-/** The yaw straight out of the door side of a car: across the door, not along it. */
+/**
+ * Where a body ends up when the door sequence has carried it in: the seat the machine actually has.
+ *
+ * Every car in this city is left-hand drive and every one of them is furnished that way — the steering
+ * wheel, the column and the lit dials are built at the model's own driver's eye, which is at +X in the
+ * body's frame. +X is the car's *left* on this map, because +Z is south and a yaw of zero faces south:
+ * the same axis an aeroplane banks about and a motorcycle leans about, so a seat on one side of a car is a
+ * seat on the same side of everything else. A model that says where its driver's eye is gets its body put
+ * exactly there; a car off the street has no model to ask and gets the same side at the same distance.
+ * @param {string} tag    'own' | 'traffic' | 'boat' | 'plane' | 'bike'
+ * @param {number} cx @param {number} cz  the machine's origin, world metres
+ * @param {number} cyaw   its heading, radians
+ * @param {number[]|null} [eye]  the model's own `driverEye` anchor, [x, y, z] in the body's frame
+ * @returns {number[]} [x, z] where the body stands while it sits
+ */
+export function seatFor(tag, cx, cz, cyaw, eye = null) {
+  // Both are [x, z] pairs, not [x, y, z]: a heading on the ground has no height in it, and reading the
+  // third element of a two-element vector gives `undefined` and then NaN, silently, all the way into the
+  // body's position and from there into the place the game remembers as dry land.
+  const left = [Math.cos(cyaw), -Math.sin(cyaw)];
+  const fwd = [Math.sin(cyaw), Math.cos(cyaw)];
+  if (tag === 'boat') return [cx - fwd[0] * 0.6, cz - fwd[1] * 0.6];
+  // The left seat of a cockpit, two rows back from the panel: the pilot's, and the same side as the door
+  // he climbed in through and will climb out of.
+  if (tag === 'plane') return [cx + left[0] * 0.42 + fwd[0] * 1.4, cz + left[1] * 0.42 + fwd[1] * 1.4];
+  // A saddle is on the centreline, a little behind the origin the physics puts between the contact patches.
+  if (tag === 'bike') return [cx - fwd[0] * 0.1, cz - fwd[1] * 0.1];
+  const across = eye ? eye[0] : 0.42, along = eye ? eye[2] : 0.08;
+  return [cx + left[0] * across + fwd[0] * along, cz + left[1] * across + fwd[1] * along];
+}
+
+/**
+ * The yaw straight out of the door side of a car: across the door, not along it. `side` is which side of
+ * the car the man is standing on, +1 being its left — the same sign `foot.near.side` reports, measured
+ * along the body's lateral axis rather than along its nose, because a door is on a side and not on an end.
+ */
 export function awayFromCar(carX, carZ, yaw, side) {
   let a = yaw + (side >= 0 ? Math.PI / 2 : -Math.PI / 2);
   if (a > Math.PI) a -= TAU;

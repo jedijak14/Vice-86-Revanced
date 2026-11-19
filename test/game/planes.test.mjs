@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 import {
   BOARD_REACH, APRON_CAST, APRON_SPACING, FLEET,
-  runwaysFromPlan, compassDeg, designator, createPlanes, planeMeshFor,
+  runwaysFromPlan, compassDeg, designator, createPlanes, planeMeshFor, SHAPES,
   writeMatrix, toKnots, planeInstruments,
 } from '../../web/src/game/planes.js';
 import { planeSpec, createPlane, AIRFRAMES, KNOT, basisFromAttitude } from '../../web/src/physics/plane.js';
@@ -349,6 +349,34 @@ test('each airframe is drawn as the aeroplane it is, with its own size and its o
   const noseTo = (m) => m.bounds[5] - m.bounds[2];
   assert.ok(noseTo(built.get('jet')) > noseTo(built.get('trainer')), 'the jet is longer than the trainer');
   assert.ok(noseTo(built.get('commuter')) > noseTo(built.get('jet')), 'and the twin longer than either');
+});
+
+test('a propeller is a disc of the radius the shape says, and it is two blades, not one drawn twice', () => {
+  // The bounds of a mesh cannot see this: a propeller half the diameter it was sized for is still inside
+  // the tail's envelope, so the box the mesh reports is unchanged and the aeroplane simply turns a stub.
+  // What has to be decoded is the vertices at the station the engine hangs at, forward of the wing (so the
+  // fin, which is the tallest thing on the centreline and at the tail, is not mistaken for a blade).
+  for (const kind of ['trainer', 'commuter']) {
+    const shape = SHAPES[kind];
+    // The nacelle hangs under the wing by six tenths of the wing's own thickness, and the disc turns about
+    // that point: a single engine on the centreline, a twin out at +/- `nacelle`.
+    const axis = shape.engines === 1 ? 0 : shape.wingY - shape.thickness * 0.6;
+    const verts = decode(planeMeshFor(kind)).filter((v) => v.z > 1);
+    for (const station of shape.engines === 1 ? [0] : [-shape.nacelle, shape.nacelle]) {
+      const at = verts.filter((v) => Math.abs(v.x - station) < 0.12);
+      assert.ok(at.length > 8, `${kind} has something built at ${station} m out`);
+      const reach = Math.max(...at.map((v) => Math.abs(v.y - axis)));
+      // Two blades opposed about the hub reach 1.05 * propR: 0.55 of it to a blade's centre and half a
+      // blade's own height beyond that. One blade sitting on the axis reaches only half of propR, which
+      // is what a loop that forgets its own sign draws -- twice, in the same place.
+      assert.ok(reach > shape.propR * 0.95,
+        `${kind}'s disc at ${station} m reaches ${reach.toFixed(2)} m of a ${shape.propR} m propeller`);
+      const above = at.filter((v) => v.y - axis > shape.propR * 0.8).length;
+      const below = at.filter((v) => axis - v.y > shape.propR * 0.8).length;
+      assert.ok(above > 0 && below > 0,
+        `${kind} has ${above} vertices above the hub and ${below} below it, which is what two opposed blades are`);
+    }
+  }
 });
 
 test('the navigation lights are on the sides the convention says they are', () => {
