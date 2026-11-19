@@ -1,9 +1,10 @@
 // glTF 2.0 (GLB) reading: the document, its buffers, and enough of the node graph to pose a rig.
 //
-// This is a reader, not an importer. It knows about the parts of glTF the vendored models actually use
-// -- skinned meshes, one base-colour texture, TRS nodes, a skin with inverse bind matrices, and
-// translation/rotation/scale animation channels -- and it refuses anything else loudly rather than
-// drawing it wrongly. No rendering policy lives here: no materials, no units, no idea what a pedestrian
+// This is a reader, not an importer. It knows about the parts of glTF the models it is given actually
+// use -- skinned meshes, one base-colour texture, TRS nodes, a skin with inverse bind matrices,
+// translation/rotation/scale animation channels, geometry stored as integers rather than floats, and a
+// texture that is a webp or sits in a sixteenth of an atlas -- and it refuses anything else loudly rather
+// than drawing it wrongly. No rendering policy lives here: no materials, no units, no idea what a pedestrian
 // is. `core/animate.js` turns what this reads into matrices per frame, and world/people/cast.js turns
 // those into vertices the renderer can upload.
 //
@@ -15,6 +16,25 @@ const COMPONENTS = {
   5125: ['Uint32Array', 4], 5126: ['Float32Array', 4],
 };
 const CHANNELS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
+
+/**
+ * The extensions this reader genuinely handles, so a file that *requires* them is read rather than
+ * refused:
+ *
+ *   KHR_mesh_quantization  geometry stored as integers. `readGeometry` undoes it, and for the raw
+ *                          (unnormalized) integers gltfpack writes, the node's own scale and translation
+ *                          are the metre -- which is why a quantized figure is 1.9 m tall and not 16383.
+ *   KHR_texture_transform  a texture's own offset, scale and rotation. `uvMatrix` gives the 2x3 that
+ *                          turns the coordinates stored in the mesh into the ones the image is sampled
+ *                          at; without it a model packed into an atlas draws from the wrong sixteenth
+ *                          of its own texture.
+ *   EXT_texture_webp       a webp image, which every browser this game runs in decodes natively, so all
+ *                          the reader has to do is follow the extension to the image it points at.
+ */
+const READ_EXTENSIONS = new Set(['KHR_mesh_quantization', 'KHR_texture_transform', 'EXT_texture_webp']);
+
+/** What a normalized integer accessor is divided by to become a float, per componentType. */
+const NORM_DIVISOR = { 5120: 127, 5121: 255, 5122: 32767, 5123: 65535 };
 
 /** The first four bytes of a GLB, and the two chunks after the header. */
 export function parseGLB(buffer) {
@@ -34,12 +54,15 @@ export function parseGLB(buffer) {
     pos = start + chunkLength;
   }
   if (!json) throw new Error('glTF: no JSON chunk.');
-  const required = json.requiredExtensions || [];
-  const known = new Set(json.extensionsUsed || []);
+  // The field is `extensionsRequired`. This guard used to read `requiredExtensions`, which is not a glTF
+  // field, so it was a guard that never fired: nothing was ever refused, and a file whose geometry this
+  // reader cannot decode was read as though it could.
+  const required = json.extensionsRequired || [];
   for (const ext of required) {
     // KHR_materials_* change how a surface is shaded, which this reader is not asked to care about;
-    // anything else (meshopt, Draco, texture transform) changes the bytes themselves and needs a decoder.
-    if (/^(KHR_materials_|MSFT_|EXT_texture_status)/.test(ext) || ext === 'KHR_texture_transform') continue;
+    // anything else (meshopt, Draco) changes the bytes themselves and needs a decoder this does not have.
+    if (/^(KHR_materials_|MSFT_|EXT_texture_status)/.test(ext)) continue;
+    if (READ_EXTENSIONS.has(ext)) continue;
     throw new Error(`glTF: required extension ${ext} is not read by this loader.`);
   }
   return { json, bin: bin || new Uint8Array(0) };
@@ -81,6 +104,61 @@ export function readAccessor(json, bin, index, out = null) {
   return { array: dst, count, components: comps, normalized };
 }
 
+/**
+ * A geometry attribute as floats in the model's own units: a position in metres (before the node's
+ * transform, which is where a quantized file keeps its scale), a normal as a direction, a texture
+ * coordinate as the material samples it. Storage is not the value, and the three ways a file may store
+ * one are told apart here rather than by whoever reads it:
+ *
+ *   floats            nothing to undo;
+ *   normalized ints   divide by the type's largest value, clamping a signed -128 or -32768 to -1 as the
+ *                     specification says, which is what an i8 normal or a u16 texture coordinate is;
+ *   raw ints          the integer *is* the value and the node's scale is the metre (KHR_mesh_quantization
+ *                     as gltfpack writes it), so these become floats and are placed by the node matrix
+ *                     that whoever reads this already applies.
+ *
+ * Indices, joints and weights are not geometry and stay the integers they are: read those with
+ * `readAccessor`. `out` is reused when it fits, as it is there.
+ * @returns {{array: Float32Array, count: number, components: number}|null}
+ */
+export function readGeometry(gltf, primitive, name, out = null) {
+  const index = primitive.attributes?.[name];
+  if (index === undefined) return null;
+  const acc = gltf.json.accessors?.[index];
+  const raw = gltf.accessor(index);
+  if (!acc || raw.array instanceof Float32Array) return { array: raw.array, count: raw.count, components: raw.components };
+  const divisor = NORM_DIVISOR[acc.componentType];
+  const dst = out && out.length === raw.array.length && out instanceof Float32Array ? out : new Float32Array(raw.array.length);
+  if (!divisor) { for (let i = 0; i < dst.length; i++) dst[i] = raw.array[i]; }        // u32 geometry: the integer is the value
+  else if (acc.normalized) {
+    // A signed byte bottoms out at -128, which has no -1.0157 to divide down to: the specification clamps it.
+    const floor = acc.componentType === 5120 || acc.componentType === 5122 ? -1 : 0;
+    for (let i = 0; i < dst.length; i++) {
+      const v = raw.array[i] / divisor;
+      dst[i] = v < floor ? floor : v;
+    }
+  } else { for (let i = 0; i < dst.length; i++) dst[i] = raw.array[i]; }               // raw ints: the node places them
+  return { array: dst, count: raw.count, components: raw.components };
+}
+
+/**
+ * A texture's placement as a 2x3 matrix, from KHR_texture_transform: `uv' = T(offset) · R(rotation) ·
+ * S(scale) · uv`, which is four multiplies and two adds per vertex. Null when the texture is placed
+ * where it was authored, which is most of them.
+ * @param {object} [info]  the material's texture info (the object holding `index`)
+ * @returns {number[]|null} [a, b, ou, c, d, ov] with u' = a·u + b·v + ou and v' = c·u + d·v + ov
+ */
+export function uvMatrix(info) {
+  const t = info?.extensions?.KHR_texture_transform;
+  if (!t) return null;
+  const [ou, ov] = t.offset || [0, 0];
+  const [su, sv] = t.scale || [1, 1];
+  const r = t.rotation || 0;
+  if (r === 0) return (su === 1 && sv === 1 && ou === 0 && ov === 0) ? null : [su, 0, ou, 0, sv, ov];
+  const cos = Math.cos(r), sin = Math.sin(r);
+  return [cos * su, -sin * sv, ou, sin * su, cos * sv, ov];
+}
+
 /** A model in memory: the document, its binary chunk, and the tables read from them on demand. */
 export class Gltf {
   constructor(buffer) {
@@ -102,18 +180,44 @@ export class Gltf {
 
   accessor(index, out) { return readAccessor(this.json, this.bin, index, out); }
 
-  /** `POSITION`-style convenience: an accessor by a mesh attribute name. */
+  /** `POSITION`-style convenience: an accessor by a mesh attribute name, as it is stored. */
   attribute(primitive, name, out) {
     const index = primitive.attributes?.[name];
     return index === undefined ? null : this.accessor(index, out);
   }
 
-  /** A texture image as bytes (PNG/JPEG) -- decoding is the browser's job, so this hands the bytes over. */
+  /** The same attribute as floats in the model's own units, for geometry rather than for indices. */
+  geometry(primitive, name, out) {
+    return readGeometry(this, primitive, name, out);
+  }
+
+  /** A texture image as bytes (PNG/JPEG/WebP) -- decoding is the browser's job, so this hands the bytes over. */
   imageBytes(imageIndex) {
     const im = this.images[imageIndex];
     if (!im || im.bufferView === undefined) return null;
     const view = this.json.bufferViews[im.bufferView];
     return this.bin.subarray(view.byteOffset, view.byteOffset + view.byteLength);
+  }
+
+  /**
+   * The image a texture actually points at. A file that carries a webp says so in an extension and leaves
+   * `source` out, because a reader without EXT_texture_webp is meant to fall back to a PNG that is not
+   * there; following the extension is the whole of supporting it.
+   * @returns {number} the image index, or -1 when the texture has none
+   */
+  textureSource(textureIndex) {
+    const t = this.textures[textureIndex];
+    if (!t) return -1;
+    const webp = t.extensions?.EXT_texture_webp?.source;
+    return webp !== undefined ? webp : (t.source ?? -1);
+  }
+
+  /** A texture's image as bytes, and what those bytes are. */
+  textureBytes(textureIndex) {
+    const source = this.textureSource(textureIndex);
+    if (source < 0) return null;
+    const bytes = this.imageBytes(source);
+    return bytes ? { bytes, mimeType: this.images[source].mimeType || null, index: source } : null;
   }
 
   /** The node indices that are children of `nodeIndex`, from the scene graph as authored. */

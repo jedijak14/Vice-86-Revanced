@@ -17,6 +17,8 @@ import { createShops, indexShops } from '../../web/src/game/shops.js';
 import { createFoot } from '../../web/src/game/foot.js';
 import { createWeapon } from '../../web/src/game/weapons.js';
 import { createPurse } from '../../web/src/game/money.js';
+import { createTraffic } from '../../web/src/game/traffic.js';
+import { prepareLaneGraph } from '../../web/src/game/lanes.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gameSource = readFileSync(join(here, '../../web/src/game/game.js'), 'utf8');
@@ -86,6 +88,42 @@ test('the shop rules, the walker and the gun answer to what the game calls them 
   assertWired('foot', foot, 'game/foot.js is the man, and the frame loop only knows these names');
   const gun = createWeapon({ crowd: anything, wanted: anything, purse: anything, toast: anything, physics: anything, at: anything });
   assertWired('gun', gun, 'game/weapons.js is the .38');
+});
+
+test('the traffic answers to what the frame loop calls it by, horns and walkers included', () => {
+  // createTraffic takes a renderer, a physics world and the model list, but it only *calls* them, so the
+  // permissive stub is enough to build the real object over a real lane graph. That matters: `traffic.step`
+  // and `traffic.setFocus` have been in the frame loop since the beginning and a typo there would be
+  // caught by any drive at all, but `setWalker` and `honking` are reached for once a step, from inside a
+  // branch that only runs on foot, and nothing else would notice them missing until somebody stood in a
+  // road and wondered why the cars went through him.
+  const graph = prepareLaneGraph({
+    lanes: [{ pts: [0, 0, 0, 0, 0, 200], next: [], speedLimit: 13.4, width: 3.3 }],
+    junctions: [],
+  });
+  const traffic = createTraffic({ renderer: anything, physics: anything, graph, models: [], seed: 1, notify: null });
+  assertWired('traffic', traffic, 'game/traffic.js is the street, and game.js only knows these names');
+  assert.equal(typeof traffic.setWalker, 'function', 'the man on foot is described to the drivers');
+  assert.ok(Array.isArray(traffic.honking), 'and the drivers that stopped for him are reported as a list');
+  assert.equal(typeof traffic.nearestTo, 'function', 'the street holds out a car to a man on foot');
+  assert.equal(typeof traffic.take, 'function', 'and hands it over when he takes it');
+  assert.equal(typeof traffic.adopt, 'function', 'and keeps the car he left standing where he left it');
+
+  // The two are not just present but usable: a walker can be described, taken away again, and the step
+  // run either way without throwing, which is the whole of what game.js does with them each frame.
+  traffic.setWalker({ active: true, x: 1, z: 2, yaw: 0, vx: 0, vz: 0, crouching: false });
+  traffic.setWalker({ active: false });
+  traffic.setWalker(null);
+  traffic.step(1 / 30);
+  assert.equal(traffic.honking.length, 0, 'an empty road has nobody to honk');
+  // And the same for a car: an empty street holds out nothing, taking nothing is null rather than a throw,
+  // and a car it was not given is refused. game.js does all three from inside a branch that only runs on
+  // foot, which is exactly where a missing name hides.
+  const held = traffic.nearestTo(0, 0, 2.4, 1.5);
+  assert.equal(held.active, false, 'an empty street has no car in it to take');
+  assert.equal(traffic.take(held.id), null, 'nothing to take is null');
+  assert.equal(traffic.adopt(null), false, 'and no car handed over is no car parked');
+  traffic.dispose();
 });
 
 test('the shop records the room is built from are where indexShops put them', () => {

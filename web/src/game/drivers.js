@@ -97,6 +97,13 @@ class Driver {
     this.stoppedAtLine = false;
     this.heldAtLine = false;
     this.amberChoice = AMBER_UNDECIDED;
+    /**
+     * What this step's hardest braking was for, and how hard: OBSTACLE.* and m/s^2, or -1 and 0 when
+     * nothing on the path needed avoiding. A driver brakes identically for a man and for a wreck, so
+     * the only way to know whether the horn is warranted is to keep the reason with the deceleration.
+     */
+    this.avoidKind = -1;
+    this.avoidAccel = 0;
     // Pose and lamps, for whoever draws and collides the vehicle.
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.braking = false;
@@ -113,6 +120,12 @@ class Driver {
 }
 
 /** A thing in the road that is not traffic: a capsule in the ground plane. */
+/**
+ * What an obstacle is, which is the only thing a driver needs to know about it beyond its shape: it
+ * brakes the same way for a man as for a car, but it is only rude to lean on the horn for a man.
+ */
+export const OBSTACLE = Object.freeze({ VEHICLE: 0, PERSON: 1 });
+
 class Obstacle {
   constructor() {
     this.x = 0; this.z = 0;
@@ -120,6 +133,8 @@ class Obstacle {
     this.hx = 0; this.hz = 0;
     this.radius = 1;
     this.vx = 0; this.vz = 0;
+    /** OBSTACLE.*: what it is, so a driver can tell a man in the road from a wreck in it. */
+    this.kind = OBSTACLE.VEHICLE;
   }
 }
 
@@ -152,8 +167,10 @@ export class TrafficSim {
    * @param {number} yaw
    * @param {number} halfLength @param {number} halfWidth
    * @param {number} vx @param {number} vz  velocity, m/s
+   * @param {number} [kind] OBSTACLE.*; a vehicle by default. A person is described by the same
+   *        capsule with a radius of about a shoulder and no length, which is all a man is.
    */
-  obstacle(x, z, yaw, halfLength, halfWidth, vx, vz) {
+  obstacle(x, z, yaw, halfLength, halfWidth, vx, vz, kind = OBSTACLE.VEHICLE) {
     if (this.obstacleCount === this.obstacles.length) this.obstacles.push(new Obstacle());
     const o = this.obstacles[this.obstacleCount++];
     const core = Math.max(0, halfLength - halfWidth);
@@ -161,6 +178,7 @@ export class TrafficSim {
     o.hx = Math.sin(yaw) * core; o.hz = Math.cos(yaw) * core;
     o.radius = halfWidth;
     o.vx = vx; o.vz = vz;
+    o.kind = kind;
   }
 
   /**
@@ -396,6 +414,7 @@ export class TrafficSim {
       }
     }
 
+    car.avoidKind = -1; car.avoidAccel = 0;
     if (this.obstacleCount > 0) accel = Math.min(accel, this._avoid(car));
 
     car.a = Math.max(accel, -MAX_DECEL);
@@ -585,11 +604,16 @@ export class TrafficSim {
     car.held = null;
   }
 
-  /** Acceleration that keeps the driver from running into an obstacle on its path. */
+  /**
+   * Acceleration that keeps the driver from running into an obstacle on its path, and the reason: the
+   * obstacle that produced the hardest braking is remembered on the car, because whoever decides
+   * whether to sound the horn has to know whether the thing being stopped for is a man.
+   */
   _avoid(car) {
     const look = clamp(car.v * PATH_LOOK_SECONDS + PATH_LOOK_MIN, PATH_LOOK_MIN, PATH_LOOK_MAX);
     const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw);
     let accel = Infinity;
+    let kind = OBSTACLE.VEHICLE;
     for (let k = 0; k < this.obstacleCount; k++) {
       const o = this.obstacles[k];
       const dx = o.x - car.x, dz = o.z - car.z;
@@ -602,10 +626,12 @@ export class TrafficSim {
         // Only the part of its speed along our heading helps: an obstacle crossing the path
         // counts as standing still.
         const along = Math.max(0, o.vx * fx + o.vz * fz);
-        accel = Math.min(accel, this._follow(car, Math.max(MIN_GAP, d - PATH_STEP * 0.5), along));
+        const want = this._follow(car, Math.max(MIN_GAP, d - PATH_STEP * 0.5), along);
+        if (want < accel) { accel = want; kind = o.kind; }
         break;
       }
     }
+    if (accel < Infinity) { car.avoidAccel = accel; car.avoidKind = kind; }
     return accel;
   }
 

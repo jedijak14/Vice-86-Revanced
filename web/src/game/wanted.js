@@ -30,6 +30,11 @@ export const OFFENCES = Object.freeze({
   'shots fired': 3,
   'person shot': 5,
   'shop held up': 4,
+  // A car taken off the street. Two charges, because the two acts are not the same: one has somebody
+  // thrown out of the driver's seat onto the road, and one has an empty car standing at the kerb.
+  'car jacked': 4,
+  'car stolen': 2,
+  'patrol car taken': 6,
   'peds scattered': 1,
   'wrong way': 2,
   'kerb riding': 1,

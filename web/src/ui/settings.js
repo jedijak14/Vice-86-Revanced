@@ -12,9 +12,9 @@ export const SETTINGS_VERSION = 1;
 export const STORAGE_KEY = 'vice86.settings';
 
 /** Concrete presets, weakest first. The order is the scale Auto moves along. */
-export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra']);
+export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra', 'ultraHigh']);
 /** Every value the preset selector can show. */
-export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'custom']);
+export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'ultraHigh', 'custom']);
 
 /** Named times of day (ARCHITECTURE section 8). `hours` is passed to actions.setTime as a convenience. */
 export const TIME_OPTIONS = Object.freeze([
@@ -69,7 +69,7 @@ const LOW_TO_ULTRA = ['Low', 'Medium', 'High', 'Ultra'];
 const GRAPHICS_FIELDS = [
   choice('preset', 'Preset', [
     { value: 'auto', label: 'Auto' }, { value: 'ultraLow', label: 'Ultra Low' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'custom', label: 'Custom' },
+    { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'ultraHigh', label: 'Ultra High' }, { value: 'custom', label: 'Custom' },
   ], 'auto', 'Auto reads your graphics hardware, picks a starting preset and corrects it once from measured frame times. Changing any option below switches to Custom.'),
 
   range('resolutionScale', 'Resolution scale', 0.5, 1, 0.05, 0.85, percent,
@@ -125,8 +125,10 @@ const CONTROLS_FIELDS = [
 const GAME_FIELDS = [
   choice('units', 'Units', [{ value: 'kmh', label: 'KM/H' }, { value: 'mph', label: 'MPH' }], 'mph', 'Units of the speed readout.'),
   choice('timeFlow', 'Time flow', [
-    { value: 0, label: 'Paused' }, { value: 1, label: 'Real time' }, { value: 10, label: '10\u00d7' }, { value: 60, label: '60\u00d7' },
-  ], 10, 'How fast the clock runs. At 60\u00d7 a full day takes 24 minutes.'),
+    { value: 0, label: 'Still' }, { value: 1, label: 'Real time' },
+    { value: 10, label: 'Fast · an hour in six minutes' },
+    { value: 60, label: 'Cycle · a day in twenty-four minutes' },
+  ], 60, 'How the sky moves on its own. Cycle turns the whole day while you drive.'),
   choice('startTime', 'Start time', TIME_OPTIONS, 'dusk', 'The hour a drive starts at.'),
   choice('weather', 'Weather', WEATHER_OPTIONS, 'dynamic', 'Dynamic drifts between clear skies, showers and storms.'),
   toggle('reduceFlashing', 'Reduce flashing', false,
@@ -204,6 +206,14 @@ export const PRESETS = Object.freeze({
     shadows: 3, ao: 2, reflections: 3, lights: 3, volumetrics: 1,
     drawDistance: 3, density: 3, traffic: 3, particles: 2,
     antialiasing: 'taa', bloom: 2, motionBlur: 3, filmGrain: true, chromaticAberration: true,
+  }),
+  // Ultra High: the preset for a machine with nothing else to do. Supersampled, every table at its
+  // new top row, and the dynamic-resolution governor switched off so the supersample holds.
+  ultraHigh: Object.freeze({
+    resolutionScale: 1.25, dynamicResolution: false, maxPixelRatio: 2.5, frameCap: 0,
+    shadows: 4, ao: 3, reflections: 4, lights: 4, volumetrics: 1,
+    drawDistance: 3, density: 3, traffic: 3, particles: 3,
+    antialiasing: 'taa', bloom: 3, motionBlur: 3, filmGrain: true, chromaticAberration: true,
   }),
 });
 

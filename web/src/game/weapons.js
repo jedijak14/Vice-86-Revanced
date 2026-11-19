@@ -19,9 +19,11 @@ import { clamp } from '../core/math.js';
 
 /** The guns the street can find. `rate` is shots per second, `spread` radians of half-angle per shot. */
 export const WEAPONS = Object.freeze({
-  pistol: { name: 'Short .38', magazine: 6, reserve: 24, rate: 2.6, spread: 0.006, move: 0.02, reach: 160, stun: 0.55 },
-  shotgun: { name: '12-gauge', magazine: 6, reserve: 18, rate: 0.9, spread: 0.03, move: 0.055, reach: 55, pellets: 8, stun: 0.9 },
-  smg: { name: '9 mm machine pistol', magazine: 32, reserve: 64, rate: 11, spread: 0.014, move: 0.075, reach: 120, stun: 0.45 },
+  // `hands` is how the body holds it, and therefore which of the vendored stance clips it wears:
+  // one hand on the .38, two on the long guns (see world/people/cast.js ROLES).
+  pistol: { name: 'Short .38', hands: 1, magazine: 6, reserve: 24, rate: 2.6, spread: 0.006, move: 0.02, reach: 160, stun: 0.55 },
+  shotgun: { name: '12-gauge', hands: 2, magazine: 6, reserve: 18, rate: 0.9, spread: 0.03, move: 0.055, reach: 55, pellets: 8, stun: 0.9 },
+  smg: { name: '9 mm machine pistol', hands: 2, magazine: 32, reserve: 64, rate: 11, spread: 0.014, move: 0.075, reach: 120, stun: 0.45 },
 });
 /** Seconds to work a magazine: the game refuses a shot for this long, and plays the sound for it. */
 export const RELOAD_SECONDS = Object.freeze({ pistol: 1.4, shotgun: 2.6, smg: 2.0 });
@@ -49,10 +51,12 @@ export function spreadDir(look, weapon, heat, move, rng, out = [0, 0, 0]) {
   const half = weapon.spread + weapon.move * (heat * 0.7 + move * 0.9);
   const r = Math.sqrt(rng(2)) * half;                     // a real muzzle pattern is denser in the middle
   const c = Math.cos(look.pitch), s = Math.sin(look.pitch);
-  // Tangent frame of the view direction: right = (cos yaw, 0, -sin yaw), up = (-sin yaw*s, c, cos yaw*s).
-  const fx = Math.sin(look.yaw) * c, fy = -s, fz = Math.cos(look.yaw) * c;
+  // Tangent frame of the view direction, which rises with the pitch because a positive pitch raises the
+  // eye (see game/foot.js `aim`, and the shoulder camera that agrees with it): forward = (sin yaw·c, s,
+  // cos yaw·c), right = (cos yaw, 0, -sin yaw), up = (-sin yaw·s, c, -cos yaw·s).
+  const fx = Math.sin(look.yaw) * c, fy = s, fz = Math.cos(look.yaw) * c;
   const rx = Math.cos(look.yaw), ry = 0, rz = -Math.sin(look.yaw);
-  const ux = -Math.sin(look.yaw) * s, uy = c, uz = Math.cos(look.yaw) * s;
+  const ux = -Math.sin(look.yaw) * s, uy = c, uz = -Math.cos(look.yaw) * s;
   const dx = fx + (rx * Math.cos(a) + ux * Math.sin(a)) * r;
   const dy = fy + (ry * Math.cos(a) + uy * Math.sin(a)) * r;
   const dz = fz + (rz * Math.cos(a) + uz * Math.sin(a)) * r;

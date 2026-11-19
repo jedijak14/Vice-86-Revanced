@@ -245,7 +245,13 @@ export async function boot(env) {
 
     // ---- the game
     stage = 'preparing the car and the traffic';
-    audio = audioModule.createAudio(options.seed === null ? {} : { seed: options.seed });
+    // The recorded engine, horn and impacts (audio/samples.js). The memory budget is decided above and
+    // before anything is allocated, so it decides here too: on a short-memory device only the car in
+    // hand and its horn are fetched, and the synth's own impact voices carry the rest.
+    audio = audioModule.createAudio({
+      ...(options.seed === null ? {} : { seed: options.seed }),
+      essentialOnly: settings.graphics.memoryMode === 'low',
+    });
     input = createInput({
       keyTarget: win,
       getGamepads: () => (win.navigator && typeof win.navigator.getGamepads === 'function' ? win.navigator.getGamepads() : null),

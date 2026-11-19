@@ -11,6 +11,7 @@ export const PRESET_DEFAULTS = Object.freeze({
   medium: { resolutionScale: 0.85, maxPixelRatio: 1, shadows: 2, ao: 1, reflections: 1, antialiasing: 'taa', bloom: 1, motionBlur: 1, depthOfField: 1, lights: 1, drawDistance: 1, particles: 1, volumetrics: 0, filmGrain: true, chromaticAberration: false },
   high: { resolutionScale: 1, maxPixelRatio: 1.5, shadows: 3, ao: 2, reflections: 2, antialiasing: 'taa', bloom: 2, motionBlur: 2, depthOfField: 2, lights: 2, drawDistance: 2, particles: 2, volumetrics: 1, filmGrain: true, chromaticAberration: true },
   ultra: { resolutionScale: 1, maxPixelRatio: 2, shadows: 3, ao: 2, reflections: 3, antialiasing: 'taa', bloom: 2, motionBlur: 3, depthOfField: 3, lights: 3, drawDistance: 3, particles: 2, volumetrics: 1, filmGrain: true, chromaticAberration: true },
+  ultraHigh: { resolutionScale: 1.25, maxPixelRatio: 2.5, shadows: 4, ao: 3, reflections: 4, antialiasing: 'taa', bloom: 3, motionBlur: 3, depthOfField: 3, lights: 4, drawDistance: 3, particles: 3, volumetrics: 1, filmGrain: true, chromaticAberration: true },
 });
 
 // One row per level of each setting. These tables are the tuning surface of the renderer.
@@ -19,8 +20,9 @@ const SHADOWS = [
   { cascades: 2, size: 1024, distance: 70, taps: 5 },
   { cascades: 3, size: 2048, distance: 150, taps: 8 },
   { cascades: 4, size: 2048, distance: 260, taps: 12 },
+  { cascades: 4, size: 4096, distance: 420, taps: 16 },   // ultra high: the whole visible street in shadow
 ];
-const AO = [{ taps: 0, radius: 0 }, { taps: 8, radius: 0.7 }, { taps: 14, radius: 0.8 }];
+const AO = [{ taps: 0, radius: 0 }, { taps: 8, radius: 0.7 }, { taps: 14, radius: 0.8 }, { taps: 20, radius: 0.85 }];
 // scale: resolution of the trace relative to the frame; steps: march samples; resolve: taps of the roughness blur;
 // planar: taps of the wet-road mirror's vertical fan (0 = no mirror pass: trace and probe only);
 // probe: face size of the scene reflection probe in pixels (0 = the sky alone is reflected), probeFaces: faces redrawn per frame.
@@ -35,10 +37,11 @@ const REFLECTIONS = [
   { steps: 20, scale: 0.5, resolve: 5, refine: 3, planar: 0, roomPlanar: 6, probe: 256, roomProbe: 256, roomProbeFine: 2, probeFaces: 1 },
   { steps: 36, scale: 0.5, resolve: 9, refine: 4, planar: 8, roomPlanar: 8, probe: 512, roomProbe: 512, roomProbeFine: 4, probeFaces: 2 },
   { steps: 56, scale: 1, resolve: 12, refine: 5, planar: 12, roomPlanar: 12, probe: 512, roomProbe: 1024, roomProbeFine: 2, probeFaces: 3 },
+  { steps: 72, scale: 1, resolve: 16, refine: 6, planar: 16, roomPlanar: 16, probe: 1024, roomProbe: 1024, roomProbeFine: 4, probeFaces: 4 },
 ];
 /** Whether a preset draws the road-plane mirror anywhere (wet street or closed room), and so needs its target. */
 export const hasMirror = (reflections) => reflections.planar > 0 || reflections.roomPlanar > 0;
-const BLOOM = [{ mips: 0 }, { mips: 5 }, { mips: 7 }];
+const BLOOM = [{ mips: 0 }, { mips: 5 }, { mips: 7 }, { mips: 8 }];
 // taps: the most samples along a streak (short streaks take fewer); shutter: exposure in 60 Hz frames (0.5 = a 180 degree
 // shutter, the film standard). The levels differ in sample count, not in how much blur there is.
 const MOTION_BLUR = [{ taps: 0, shutter: 0 }, { taps: 8, shutter: 0.5 }, { taps: 12, shutter: 0.5 }, { taps: 16, shutter: 0.5 }];
@@ -59,14 +62,15 @@ const LIGHTS = [
   { maxLights: 320, sizeNear: 32, sizeFar: 16, perCell: 16 },
   { maxLights: 640, sizeNear: 48, sizeFar: 32, perCell: 24 },
   { maxLights: 1024, sizeNear: 64, sizeFar: 32, perCell: 32 },
+  { maxLights: 1536, sizeNear: 72, sizeFar: 40, perCell: 40 },
 ];
-const PARTICLES = [{ max: 384 }, { max: 1536 }, { max: 4096 }];
+const PARTICLES = [{ max: 384 }, { max: 1536 }, { max: 4096 }, { max: 8192 }];
 // What Ultra Low shaves off the bottom of every table, because a level of 0 is already "off" and the
 // preset still has to be cheaper than Low: fewer lights to bin, a smaller grid to bin them in, a
 // shorter shadow and reflection reach, and a particle budget that fits sparks from one crash.
 const ULTRA_LOW = Object.freeze({ maxLights: 64, sizeNear: 24, perCell: 12, particles: 128, reach: 0.55 });
 // Detail level handed to surface families in uQuality.x: micro detail is skipped below 0.5.
-const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1 };
+const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1, ultraHigh: 1.15 };
 /**
  * What a small-memory device is held to, whatever preset it asked for. These are not about frame rate: they
  * are the sizes of the buffers that stay alive between frames — the internal resolution (every target in the
@@ -88,18 +92,20 @@ export function resolveQuality(graphics = {}) {
   const presetName = PRESET_DEFAULTS[graphics.preset] ? graphics.preset : 'high';
   const base = PRESET_DEFAULTS[presetName];
   const pick = (name) => (graphics[name] !== undefined ? graphics[name] : base[name]);
-  const shadows = clampInt(pick('shadows'), 0, 3, base.shadows), ao = clampInt(pick('ao'), 0, 2, base.ao);
-  const reflections = clampInt(pick('reflections'), 0, 3, base.reflections), bloom = clampInt(pick('bloom'), 0, 2, base.bloom);
-  const motionBlur = clampInt(pick('motionBlur'), 0, 3, base.motionBlur), lights = clampInt(pick('lights'), 0, 3, base.lights);
+  // The clamps follow the tables, so adding a row to a table is adding a level to the setting.
+  const shadows = clampInt(pick('shadows'), 0, SHADOWS.length - 1, base.shadows), ao = clampInt(pick('ao'), 0, AO.length - 1, base.ao);
+  const reflections = clampInt(pick('reflections'), 0, REFLECTIONS.length - 1, base.reflections), bloom = clampInt(pick('bloom'), 0, BLOOM.length - 1, base.bloom);
+  const motionBlur = clampInt(pick('motionBlur'), 0, 3, base.motionBlur), lights = clampInt(pick('lights'), 0, LIGHTS.length - 1, base.lights);
   const depthOfField = clampInt(pick('depthOfField'), 0, 3, base.depthOfField);
-  const particles = clampInt(pick('particles'), 0, 2, base.particles), drawDistance = clampInt(pick('drawDistance'), 0, 3, base.drawDistance);
+  const particles = clampInt(pick('particles'), 0, PARTICLES.length - 1, base.particles), drawDistance = clampInt(pick('drawDistance'), 0, 3, base.drawDistance);
   const aa = pick('antialiasing'), antialiasing = aa === 'off' || aa === 'fxaa' || aa === 'taa' ? aa : base.antialiasing;
   // The detail hint follows the heaviest visual settings rather than the preset label, so 'custom' works.
   const detail = graphics.preset in DETAIL ? DETAIL[graphics.preset] : [0.25, 0.5, 0.8, 1][Math.round((shadows + reflections + lights) / 3)];
   const cuts = presetName === 'ultraLow' ? ULTRA_LOW : null;
   const mem = graphics.lowMemory === true ? LOW_MEMORY : null;
-  const scale = clampNum(pick('resolutionScale'), 0.5, 1, base.resolutionScale);
-  const shadow = { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3][drawDistance] * (cuts ? ULTRA_LOW.reach : 1) };
+  // Above 1 is supersampling: ultra high renders the street bigger than the glass and settles it down.
+  const scale = clampNum(pick('resolutionScale'), 0.5, 1.5, base.resolutionScale);
+  const shadow = { ...SHADOWS[shadows], distance: SHADOWS[shadows].distance * [0.8, 1, 1.15, 1.3, 1.45][drawDistance] * (cuts ? ULTRA_LOW.reach : 1) };
   if (mem) {
     shadow.size = Math.min(shadow.size, mem.shadowSize);
     shadow.cascades = Math.min(shadow.cascades, mem.cascades);
