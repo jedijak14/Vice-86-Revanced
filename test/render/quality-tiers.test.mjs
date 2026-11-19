@@ -16,7 +16,7 @@ import { parseOptions } from '../../web/src/game/automation.js';
 const ORDERED = ['shadows', 'ao', 'reflections', 'lights', 'volumetrics', 'drawDistance', 'density', 'traffic', 'particles', 'bloom', 'motionBlur'];
 
 test('Ultra Low is on every list a preset can be named from', () => {
-  assert.deepEqual(PRESET_NAMES, ['ultraLow', 'low', 'medium', 'high', 'ultra']);
+  assert.deepEqual(PRESET_NAMES, ['ultraLow', 'low', 'medium', 'high', 'ultra'], 'Ultra is the top rung now; Ultra High is retired');
   assert.equal(PRESET_NAMES[0], 'ultraLow', 'and it is the bottom of the ladder Auto walks');
   assert.ok(PRESET_CHOICES.includes('ultraLow'));
   assert.ok(isPresetName('ultraLow'));

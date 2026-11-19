@@ -73,6 +73,21 @@ export function updateWaveSet(set, windX, windZ, windSpeed, state, dt, camX, cam
   return set;
 }
 
+/**
+ * The sea's height at a world point, on the CPU: the same trains the ocean shader draws (set.a),
+ * at their camera-relative phases, so a hull floating in JavaScript and its reflection in the
+ * water agree about where the surface is. Vertical displacement of a Gerstner train is its
+ * amplitude times the cosine of its phase at the point.
+ */
+export function surfaceHeight(set, x, z) {
+  let h = 0;
+  for (let i = 0; i < set.count; i++) {
+    const o = i * 4;
+    h += set.a[o + 2] * Math.cos(set.a[o + 3] + set.a[o] * (x - set.camX) + set.a[o + 1] * (z - set.camZ));
+  }
+  return h;
+}
+
 /** Mean square slope of the set on the open sea (tests compare it with the Cox-Munk relation). */
 export function meanSquareSlope(set) {
   let sum = 0;

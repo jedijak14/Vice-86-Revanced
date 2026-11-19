@@ -13,7 +13,7 @@
 import { clamp, smoothstep, makeRng, hash01, angleDelta, damp, m4transformPoint, m4fromYawPos } from '../core/math.js';
 import { CHANNEL } from '../core/ids.js';
 import { trafficSpec } from '../physics/index.js';
-import { TrafficSim } from './drivers.js';
+import { TrafficSim, OBSTACLE } from './drivers.js';
 import { PatrolDispatch } from './police.js';
 import { buildFootOfficer } from '../vehicles/traffic/officers.js';
 import { comfortSpeed } from './lanes.js';
@@ -71,6 +71,18 @@ const HEADLAMP_WARM_SECONDS = 0.3; // a filament coming up to brightness, or dyi
 const OCCLUDER_RANGE = 36; // contact shadows under vehicles this close
 const ROOF_SIGN_GLOW = 9, ROOF_SIGN_SIZE = 0.55;
 const AUDIBLE = 6; // vehicles reported to the audio engine
+
+// A man in the road is an obstacle like any other and the drivers brake for him the same way, but he
+// is also the only obstacle it is worth making a noise about: a wreck is where it is, the player's own
+// car is his own business, and a man standing in a lane at eleven at night is either lost or trying to
+// be run over. So the horn is for him and for nothing else.
+const HONK_DECEL = -2.2;      // m/s^2: braking this hard for a person means he is actually in the way
+const HONK_SECONDS = 0.9;     // how long one blast lasts, which is a real horn held down
+const HONK_COOLDOWN = 2.4;    // and how long before that driver will do it again while still blocked
+const HONK_MAX = 4;           // drivers sounding at once; a whole junction is noise, not information
+const HONK_RANGE = 120;       // m: nobody honks at a man he cannot see
+/** Types whose horn is the low one, because a bus does not beep. */
+const HORN_LOW_TYPES = new Set(['bus', 'city_bus', 'truck', 'box_truck']);
 // Headlamp habits (design/brief/lighting-and-mood.md section 10). Drivers do not all reach
 // for the switch at the same moment, and one in twenty-five forgets until it is nearly dark.
 const HEADLAMP_SPREAD = 0.02; // rad: how much later than the first the last attentive driver is
@@ -118,6 +130,11 @@ class TrafficVehicle {
     this.distance = 0;
     this.level = -2;
     this.loose = false; // a parked vehicle that has been pushed
+    /** The garage id of a car the player left here, so that taking it back gives him his own car. */
+    this.registryId = null;
+    /** Seconds left of the blast this driver is sounding, and seconds until it may sound another. */
+    this.honkFor = 0;
+    this.honkWait = 0;
     this.lightBar = false; // a patrol car on a call
     // ---- Paloma PD (a police car only; see game/police.js)
     /** The light-bar state this car arrived with: the dispatch adds to it, never takes it away. */
@@ -137,7 +154,13 @@ class TrafficVehicle {
  *   models: the traffic models (10.1, 15.3); their order is the parked type index
  *   notify: what the patrol dispatch says to the player (a toast)
  */
-export function createTraffic({ renderer, physics, graph, models, seed = 1, notify = null }) {
+export function createTraffic(deps) {
+  const { renderer, physics, graph, seed = 1, notify = null } = deps;
+  // The list of vehicle types is traffic's own from here: a car the player leaves standing on the street
+  // is added to it (`adopt`), and adding to the array the caller handed over would be growing somebody
+  // else's data. The copy is shallow, so a model record handed to the game is the same record the street
+  // was drawing from, which is what makes taking a car cost nothing.
+  const models = Array.isArray(deps.models) ? deps.models.slice() : [];
   const sim = graph ? new TrafficSim(graph, { seed }) : null;
   // Without a lane graph or without vehicle types there is nothing to put on the road; the
   // simulation still runs, because its clock times the signals.
@@ -149,6 +172,9 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
     return { frontLength: he[2] + c[2], rearLength: he[2] - c[2], halfWidth: he[0], wheelbase: model.dims.wheelbase, centreZ: c[2], halfLength: he[2] };
   });
   const masses = models.map((model) => trafficSpec(model.kind, model).mass);
+  // The kind each type is, which is the model's own for the fleet and the one it was adopted under for a
+  // car the player left: `trafficSpec` needs it to make the car drivable again when he takes it back.
+  const typeKind = models.map((model) => model.kind);
   // How often each type appears on the road (buses and trucks are rare).
   const spawnWeight = (index) => (models[index].spawnWeight !== undefined ? models[index].spawnWeight : 1);
   const typeIndices = models.map((_, i) => i);
@@ -165,6 +191,18 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
   const audiblePool = [];
   for (let i = 0; i < AUDIBLE; i++) audiblePool.push({ position: [0, 0, 0], velocity: [0, 0, 0], kind: 'sedan', throttle: 0, id: 0, distance: 0 });
   const focus = { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, halfLength: 2.1, halfWidth: 1, centreZ: 0, eye: [0, 0, 0], fx: 0, fy: 0, fz: 1, vehicle: null };
+  /**
+   * The player on foot, as the drivers see him. He is not part of the crowd -- the crowd steps aside
+   * for him on its own rules -- he is an obstacle in a lane, which is what makes a car stop for him
+   * rather than drift past. A man is a capsule with no length to it: a circle of one shoulder.
+   */
+  const walker = { active: false, x: 0, z: 0, yaw: 0, radius: 0.32, vx: 0, vz: 0 };
+  /** The cars sounding their horn this step, nearest first, for the audio and the HUD. */
+  const honking = [];
+  const honkingPool = [];
+  for (let i = 0; i < HONK_MAX; i++) honkingPool.push({ id: 0, position: [0, 0, 0], forward: [0, 0, -1], low: false });
+  /** The distance each reported horn is at, so the list can be kept nearest-first by insertion. */
+  const honkDist = new Float64Array(HONK_MAX);
   const pos = [0, 0, 0];
   const centre = [0, 0, 0];
   let density = 2;
@@ -334,6 +372,10 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
     v.shape = shapes[type];
     v.view = acquireView(type);
     v.view.setPaint(paint, dirt);
+    // What it is wearing, kept on the vehicle: a car that is taken off the street is rebuilt as the
+    // player's own in the same colour, and the colour lives in the view otherwise.
+    v.paint = paint;
+    v.dirt = dirt;
     v.view.setLamps(0, 0, 0, 0);
     pos[0] = x; pos[1] = y; pos[2] = z;
     v.box = physics.createKinematicBox({ model: models[type], mass: masses[type], userData: v, pos, yaw });
@@ -546,6 +588,161 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
     destroyVehicle(v);
   }
 
+  // ------------------------------------------------------------------ taken from the street
+  //
+  // A car the player walks up to and takes. Traffic owns every vehicle on the road, so the taking is
+  // traffic's to hand over: it lifts the vehicle out of its own lists, gives the pooled view and the
+  // physics box back, and says what the game needs to build a drivable car in the same place, facing
+  // the same way, wearing the same paint. The model record is plain data -- packed meshes, numbers,
+  // arrays -- so handing it over costs nothing and does not take it away from traffic, which goes on
+  // drawing the rest of the fleet from it. The reverse is here as well: the car the player left
+  // standing becomes a parked vehicle of its own type, so the street he walked away from still has
+  // his car in it, and he can take it back the same way.
+
+  /** Fastest car (m/s) a man may climb into, and how far he may reach it from. foot.js owns the rule
+   *  (`BOARD_SPEED_LIMIT`, `BOARD_DISTANCE`) and game.js passes its own numbers in; these are only the
+   *  defaults of a search called with nothing. */
+  const TAKE_SPEED = 1.5, TAKE_REACH = 2.4;
+
+  /** The speed of a vehicle along the road, from the driver while it has one and from physics after. */
+  function speedOf(v) {
+    return v.driver ? v.driver.v : Math.hypot(v.box.vel[0], v.box.vel[2]);
+  }
+
+  /**
+   * Whether a vehicle may be walked up to and taken. Nearly stopped, whatever it is doing: a parked
+   * car, a car waiting for a man in the road, a wreck that has finished sliding. A car in somebody's
+   * race belongs to the field until the course lets go of it, and a car physics has taken over is
+   * rolling, which is the same thing as not stopped.
+   */
+  function takeable(v, speedLimit) {
+    if (v.raced) return false;
+    if (v.state === DRIVING && v.driver === null) return false;
+    if (Math.abs(speedOf(v)) >= speedLimit) return false;
+    return v.state !== WRECK || v.rest > 0.4;
+  }
+
+  /** The lists a vehicle may be standing in, in the order they are worth searching. */
+  const takeLists = [moving, parked];
+
+  /** The one pooled record `nearestTo` answers with, so that asking every step allocates nothing. */
+  const nearTake = {
+    active: false, id: 0, type: 0, kind: 'sedan', name: 'sedan', tag: 'traffic',
+    x: 0, y: 0, z: 0, yaw: 0, speed: 0, distance: 0, hadDriver: false,
+  };
+
+  /**
+   * The nearest vehicle a man standing at (x, z) could take. Called every step while the player is on
+   * foot, which is why the answer is a record rewritten in place rather than a new object.
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [reach]       metres from the man to the car's origin
+   * @param {number} [speedLimit]  fastest car taken, m/s
+   * @returns {object} `nearTake`, with `active` false when nothing is in reach
+   */
+  function nearestTo(x, z, reach = TAKE_REACH, speedLimit = TAKE_SPEED) {
+    nearTake.active = false;
+    let best = reach;
+    let found = null;
+    // `loose` is a subset of `parked` (a parked car physics has pushed), so two lists cover the road.
+    for (let pass = 0; pass < takeLists.length; pass++) {
+      const list = takeLists[pass];
+      for (let i = 0; i < list.length; i++) {
+        const v = list[i];
+        if (!takeable(v, speedLimit)) continue;
+        const dx = v.box.pos[0] - x, dz = v.box.pos[2] - z;
+        const d = Math.hypot(dx, dz);
+        if (d >= best) continue;
+        best = d; found = v;
+      }
+    }
+    if (!found) return nearTake;
+    nearTake.active = true;
+    nearTake.id = found.id; nearTake.type = found.type;
+    nearTake.kind = typeKind[found.type]; nearTake.name = models[found.type].name;
+    nearTake.x = found.box.pos[0]; nearTake.y = found.box.pos[1]; nearTake.z = found.box.pos[2];
+    nearTake.yaw = found.box.yaw; nearTake.speed = speedOf(found);
+    nearTake.distance = best;
+    // A car with a driver in it is a car somebody is being thrown out of, and the street should see it.
+    nearTake.hadDriver = found.driver !== null;
+    return nearTake;
+  }
+
+  /**
+   * Takes a vehicle off the road and hands it over. Its box and its view go back to the pools they
+   * came from -- the view is traffic's, and the player's car is drawn by a view of its own -- and its
+   * driver is given up to the simulation, the dispatch and the beat.
+   * @param {number} id  the vehicle id from `nearestTo`
+   * @returns {object|null} what the game needs to build the car, or null when it is no longer there
+   */
+  function take(id) {
+    for (let pass = 0; pass < takeLists.length; pass++) {
+      const list = takeLists[pass];
+      for (let i = 0; i < list.length; i++) {
+        const v = list[i];
+        if (v.id !== id) continue;
+        const model = models[v.type];
+        const taken = {
+          model, kind: typeKind[v.type], name: model.name,
+          paint: v.paint, dirt: v.dirt,
+          x: v.box.pos[0], y: v.box.pos[1], z: v.box.pos[2], yaw: v.box.yaw,
+          speed: speedOf(v), hadDriver: v.driver !== null, state: v.state,
+          registryId: v.registryId || null,
+          // A car of the agency's is a different act again: it is missed by the dispatch the moment it
+          // goes, and the street knows what it was.
+          // By the beat's own list for a unit that is on it, and by kind for a cruiser the player has
+          // already taken once and left on the street: the dispatch does not count that one as a unit
+          // (it is parked, and `keepPatrol` would otherwise wait for it), but it is still a patrol car
+          // and taking it again is still the same act.
+          police: policeTypes.has(v.type) || typeKind[v.type] === 'police',
+        };
+        destroyVehicle(v);
+        removeAt(list, i);
+        return taken;
+      }
+    }
+    return null;
+  }
+
+  /** The traffic type each adopted car was given, by the key it was adopted under. */
+  const adoptedTypes = new Map();
+
+  /**
+   * Puts a car that is not traffic's -- the one the player just left -- on the street as a parked
+   * vehicle of its own type. The type is made once per car and kept: leaving the same car twice, or
+   * taking it back and leaving it again, must not grow the fleet's tables for ever. It is never
+   * spawned into traffic (`typeIndices` is built before this and is not added to), so a car the
+   * player owns stays the one car of its kind on the road.
+   * @param {{model: object, kind?: string, name: string, x: number, y: number, z: number, yaw: number,
+   *          mass?: number, paint?: object, dirt?: number, registryId?: string|null}} rec
+   * @returns {boolean} whether the car was put there
+   */
+  function adopt(rec) {
+    if (!drivable || !rec || !rec.model) return false;
+    const key = rec.registryId || ('adopted:' + rec.name);
+    let type = adoptedTypes.get(key);
+    if (type === undefined) {
+      type = models.length;
+      const model = rec.model;
+      // Its own mass if the caller knows it -- the player's car is built to a specification that says --
+      // and the kind's otherwise. Both are what physics will push it about with when something hits it.
+      const kind = rec.kind || model.kind || 'sedan';
+      const mass = rec.mass > 0 ? rec.mass : trafficSpec(kind, model).mass;
+      models.push(model);
+      kits.push(createVehicleKit(renderer, model));
+      const he = model.collider.halfExtents, c = model.collider.centre;
+      shapes.push({ frontLength: he[2] + c[2], rearLength: he[2] - c[2], halfWidth: he[0], wheelbase: model.dims.wheelbase, centreZ: c[2], halfLength: he[2] });
+      masses.push(mass);
+      typeKind.push(kind);
+      viewPools.push([]);
+      adoptedTypes.set(key, type);
+    }
+    const v = makeVehicle(type, PARKED, rec.x, rec.y, rec.z, rec.yaw, rec.paint || models[type].paints[0], rec.dirt || 0);
+    v.registryId = rec.registryId || null;
+    parked.push(v);
+    return true;
+  }
+
   /** Brings a tile's parked vehicles in line with the density setting. */
   function reconcileTile(tile) {
     const share = PARKED_BY_DENSITY[density];
@@ -681,11 +878,49 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
         if (v.state === WRECK) wreckObstacle(v);
       }
       for (let i = 0; i < loose.length; i++) wreckObstacle(loose[i]);
+      // The man, after the cars: a driver that has to brake for both brakes for the nearer of them,
+      // and the reason it reports is the one that bound, which is what the horn is decided from.
+      if (walker.active) {
+        sim.obstacle(walker.x, walker.z, walker.yaw, walker.radius, walker.radius, walker.vx, walker.vz, OBSTACLE.PERSON);
+      }
       sim.step(dt);
       stepMoving(dt);
+      horns(dt);
       retire();
       spawn();
     },
+
+    /**
+     * The player on foot, where the drivers can see him. Call every step while he is out of the car,
+     * and with `active` false the moment he is back in it, or the drivers brake for a man who is
+     * sitting behind the wheel of the car they are braking for.
+     * @param {{active?: boolean, x?: number, z?: number, yaw?: number, vx?: number, vz?: number,
+     *          crouching?: boolean}} w
+     */
+    setWalker(w) {
+      if (!w || !w.active) { walker.active = false; return; }
+      walker.active = true;
+      walker.x = w.x; walker.z = w.z;
+      walker.yaw = w.yaw || 0;
+      walker.vx = w.vx || 0; walker.vz = w.vz || 0;
+      // Crouching is a smaller thing to hit and a smaller thing to stop for, but it is still in the road.
+      walker.radius = w.crouching ? 0.26 : 0.32;
+    },
+
+    /** The cars sounding their horn this step, nearest first. Refreshed by step(). */
+    honking,
+
+    /**
+     * The nearest vehicle a man at (x, z) could take, as one pooled record with `active` saying
+     * whether there is one. Called every step while the player is on foot; nothing is allocated.
+     */
+    nearestTo,
+
+    /** Takes that vehicle off the road and hands it over, or null when it has gone. */
+    take,
+
+    /** Puts a car that is not traffic's on the street as a parked vehicle of its own type. */
+    adopt,
 
     /** Fills the streets around the player at once (start of a drive, after a teleport). */
     populate() {
@@ -880,6 +1115,59 @@ export function createTraffic({ renderer, physics, graph, models, seed = 1, noti
   function distanceTo(p, eye) {
     const dx = p[0] - eye[0], dy = p[1] - eye[1], dz = p[2] - eye[2];
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Which drivers are entitled to the horn, and for how long.
+   *
+   * A driver honks when the thing it is braking hardest for is a person and it is braking hard enough
+   * that this is not a courtesy gap: HONK_DECEL is past the point where a car is committed to stopping.
+   * One blast lasts HONK_SECONDS and then that driver stays quiet for HONK_COOLDOWN even if the man is
+   * still standing there, because a horn held down forever stops being information. The nearest
+   * HONK_MAX are reported, nearest first: the audio has a cap of its own, and a junction full of horns
+   * says nothing that one horn does not.
+   *
+   * Nothing here allocates. This runs every simulated step, and the list it fills is four pooled
+   * entries kept in order by insertion, which for four items is cheaper than sorting and cheaper than
+   * the garbage a candidate array would make.
+   */
+  function horns(dt) {
+    let count = 0;
+    const eye = focus.eye;
+    for (let i = 0; i < moving.length; i++) {
+      const v = moving[i], driver = v.driver;
+      if (v.honkFor > 0) v.honkFor -= dt;
+      if (v.honkWait > 0) v.honkWait -= dt;
+      if (!driver) continue;
+      const dx = driver.x - eye[0], dz = driver.z - eye[2];
+      const squared = dx * dx + dz * dz;
+      if (squared > HONK_RANGE * HONK_RANGE) { v.honkFor = 0; continue; }   // out of earshot: give it up
+      if (driver.avoidKind === OBSTACLE.PERSON && driver.avoidAccel < HONK_DECEL
+          && v.honkFor <= 0 && v.honkWait <= 0) {
+        v.honkFor = HONK_SECONDS;
+        v.honkWait = HONK_COOLDOWN;
+      }
+      if (v.honkFor <= 0) continue;
+      const distance = Math.sqrt(squared);
+      let k = count;
+      if (k >= HONK_MAX) {
+        if (distance >= honkDist[k - 1]) continue;      // further than the four already reported
+        k = HONK_MAX - 1;                                // and the furthest of those makes way
+      } else {
+        honking[k] = honkingPool[k];
+        count++;
+      }
+      while (k > 0 && honkDist[k - 1] > distance) {
+        honking[k] = honking[k - 1]; honkDist[k] = honkDist[k - 1]; k--;
+      }
+      honkDist[k] = distance;
+      const entry = honking[k];
+      entry.id = driver.id;
+      entry.position[0] = driver.x; entry.position[1] = driver.y; entry.position[2] = driver.z;
+      entry.forward[0] = Math.sin(driver.yaw); entry.forward[1] = 0; entry.forward[2] = Math.cos(driver.yaw);
+      entry.low = HORN_LOW_TYPES.has(v.type);
+    }
+    honking.length = count;
   }
 
   function wreckObstacle(v) {

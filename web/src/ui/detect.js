@@ -296,7 +296,7 @@ export function classifyRenderer(raw) {
 // ---------------------------------------------------------------- detection
 
 /** Score a preset needs on a 1080p screen. Ultra Low needs nothing: it is the floor Auto can fall to. */
-export const PRESET_MIN_SCORE = Object.freeze({ ultraLow: 0, low: 3, medium: 5, high: 14, ultra: 27 });
+export const PRESET_MIN_SCORE = Object.freeze({ ultraLow: 0, low: 3, medium: 5, high: 14, ultra: 48 });
 
 const REFERENCE_PIXELS = 1920 * 1080;
 const rank = (preset) => PRESET_NAMES.indexOf(preset);

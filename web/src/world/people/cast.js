@@ -16,6 +16,7 @@
 import { Gltf } from '../../core/gltf.js';
 import { Rig, Player, createPose } from '../../core/animate.js';
 import { MeshBuilder } from '../../core/mesh.js';
+import { swimClips } from '../../core/swimclip.js';
 import { FAMILY, VEHICLE, VERTEX_STRIDE } from '../../core/ids.js';
 
 /** Where the parts come from. Both packs are CC0; see docs/ASSETS.md for the receipts. */
@@ -65,6 +66,13 @@ export const ROLES = Object.freeze({
   down: { clip: 'Death_A', stride: 0 },
   lie: { clip: 'Lie_Idle', stride: 0 },
   sit: { clip: 'Sit_Chair_Idle', stride: 0 },
+  sitdown: { clip: 'Sit_Chair_Down', stride: 0 },
+  standup: { clip: 'Sit_Chair_StandUp', stride: 0 },
+  swim: { clip: 'Swim_Free', stride: 1.9 },
+  tread: { clip: 'Swim_Tread', stride: 0 },
+  aim2: { clip: 'Ranged_2H_Aiming', stride: 0 },
+  shoot2: { clip: 'Ranged_2H_Shoot', stride: 0 },
+  reload2: { clip: 'Ranged_2H_Reload', stride: 0 },
 });
 
 const url = (pack, name) => `assets/models/${pack}/${name}.glb`;
@@ -127,6 +135,9 @@ export async function loadCast({ fetchFile, decodeImage = null, only = CHARACTER
     }
   }
   if (!clips.length) throw new Error('Cast: no animation clips were found in the vendored packs.');
+  // The water: no licence we can reach carries a swimming clip, so the stroke is synthesised (see
+  // core/swimclip.js) and joins the shelf here, retargeted by the same names as everything vendored.
+  for (const clip of swimClips()) clips.push(clip);
 
   for (const name of only) {
     if (!want.has(name)) continue;
@@ -170,7 +181,10 @@ async function buildCharacter(name, gltf, rig, decodeImage) {
     const rigid = !skinned;
     const rigidBone = rigid ? boneOfNode(gltf, node, rig) : -1;
     const base = positions.length / 3;
-    const m = rigid ? worlds.subarray(node * 16, node * 16 + 16) : null;
+    // The node matrix of a skinned mesh is applied to the base positions, as the glTF spec applies it
+    // to the skinned result: for the packs, whose skinned nodes are identity, this changes nothing, and
+    // for a quantized figure it is the only place its metre lives.
+    const m = worlds.subarray(node * 16, node * 16 + 16);
     const p = [0, 0, 0], d = [0, 0, 0];
     for (let v = 0; v < pos.count; v++) {
       if (m) {
@@ -269,7 +283,9 @@ export function retargetClips(cast, character) {
     seen.add(clip.name);
     const channels = [];
     for (const ch of clip.channels) {
-      const name = clip.sourceNodes?.[ch.node];
+      // A vendored channel names its bone by index into the file it came from; a synthesised one (see
+      // core/swimclip.js) carries the name itself, having no file to point at.
+      const name = ch.name !== undefined ? ch.name : clip.sourceNodes?.[ch.node];
       if (!name) continue;
       const node = rig.node(name);
       if (node < 0) continue;                                  // an IK or control bone: no clip on it
@@ -279,6 +295,15 @@ export function retargetClips(cast, character) {
   }
   return out;
 }
+
+/**
+ * The wind the hair and cloth answer to. Ultra sets the amplitudes; every lower rung leaves them
+ * at zero and the loop below costs one comparison per person per frame. Written once a frame by
+ * the game, read by every skin write: hair is a mask of 1 in the mesh, cloth 0.55, and the roots
+ * of either hold while the ends move, because that is what hair and cloth do.
+ */
+const SWAY_ENV = { hair: 0, cloth: 0, time: 0, wx: 0, wz: 0 };
+export function setSway(next = {}) { Object.assign(SWAY_ENV, next); return SWAY_ENV; }
 
 /**
  * A person: the mesh, the rig, the clock. `renderer.refreshMesh` is what pushes one frame of skinning
@@ -299,7 +324,7 @@ export function newPerson(renderer, cast, character, { height = 1.78, wardrobe =
     frame(dt = 0, metres = 0) {
       player.update(dt, metres);
       player.solve(heightScale);
-      writeVertices(build, character, heightScale);
+      writeVertices(build, character, heightScale, this.yaw);
       renderer.refreshMesh(handle);
     },
     place(x, y, z, yaw = 0) {
@@ -357,12 +382,36 @@ function buildMeshData(character, wardrobe) {
  * normalized, both inside one 36-byte vertex, so the whole mesh is written in two passes over typed
  * array views of the same ArrayBuffer.
  */
-function writeVertices(build, character, scale) {
+function writeVertices(build, character, scale, yaw = 0) {
   const buf = build.data.vertices;
   const f32 = new Float32Array(buf);
   const i16 = new Int16Array(buf);
   const out = build.skinned, outN = build.skinnedNormal;
   skinInto(character, build, scale, out, outN);
+  // Secondary motion: the skinned pose is the skeleton's opinion, and this is the wind's. Only
+  // meshes that carry a sway mask pay for it, and only while a preset has hair or cloth switched on.
+  const sway = character.sway;
+  if (sway && (SWAY_ENV.hair > 0 || SWAY_ENV.cloth > 0)) {
+    const c = Math.cos(yaw), s2 = Math.sin(yaw);
+    const lx = c * SWAY_ENV.wx + s2 * SWAY_ENV.wz;      // the world wind, in the body's own frame
+    const lz = -s2 * SWAY_ENV.wx + c * SWAY_ENV.wz;
+    const t = SWAY_ENV.time;
+    for (let v = 0; v < character.vertexCount; v++) {
+      const m = sway[v];
+      if (m <= 0) continue;
+      const isHair = m > 0.75;
+      const amp = isHair ? SWAY_ENV.hair : SWAY_ENV.cloth;
+      if (amp <= 0) continue;
+      const y = out[v * 3 + 1];
+      const lift = y < 0 ? 0 : y > 1.5 ? 1 : y / 1.5;   // roots hold, ends move
+      const ph = t * (isHair ? 2.6 : 1.7) + y * 2.4 + (v % 97) * 0.11;
+      const g = Math.sin(ph) * 0.7 + Math.sin(ph * 2.33 + 1.7) * 0.3;
+      const flutter = Math.sin(ph * 3.1 + 0.6) * 0.35;
+      out[v * 3] += (lx * 0.8 + flutter * 0.3) * g * amp * lift;
+      out[v * 3 + 1] += (isHair ? -0.25 : 0.1) * Math.abs(g) * amp * lift;
+      out[v * 3 + 2] += (lz * 0.8 + flutter * 0.2) * g * amp * lift;
+    }
+  }
   const strideF = VERTEX_STRIDE / 4, strideS = VERTEX_STRIDE / 2;
   for (let v = 0; v < character.vertexCount; v++) {
     const o = v * strideF;

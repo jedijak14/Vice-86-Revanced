@@ -11,13 +11,16 @@ export function defineSynth(K) {
   const { CHUNK, P, EV, GARAGE, Ramp, OnePole, coef, clamp } = K;
 
   // Fields of the state vector that are copied as they are instead of smoothed.
-  const DISCRETE = new Set([P.GEAR, P.SURFACE, P.AIRBORNE, P.DISTRICT, P.PAUSED, P.VOICE, P.IDLE, P.LIMITER, P.TURBO, P.GARAGE]);
+  // P.SAMPLES is discrete because the synth ramps it itself (SAMPLES_FADE): smoothing it twice would
+  // only make the handover to the recordings slower to arrive.
+  const DISCRETE = new Set([P.GEAR, P.SURFACE, P.AIRBORNE, P.DISTRICT, P.PAUSED, P.VOICE, P.IDLE, P.LIMITER, P.TURBO, P.GARAGE, P.SAMPLES]);
   for (let v = 0; v < P.TRAFFIC_VOICES; v++) {
     const o = P.TRAFFIC + v * P.TRAFFIC_STRIDE;
     DISCRETE.add(o + 4); DISCRETE.add(o + 7);                  // kind, serial
   }
 
   const PAUSE_FADE = 0.3;          // seconds for the car and the world to fade out or back in
+  const SAMPLES_FADE = 0.45;       // seconds to hand the car in hand over to its recordings, or back
   const PAUSED_AMBIENCE = 0.25;    // the city stays faintly audible behind the pause menu
 
   const SWAP_SECONDS = 0.3;        // one engine fades out while the next fades in
@@ -72,6 +75,11 @@ export function defineSynth(K) {
       this.doorL = new OnePole().set(DOOR_MUFFLE_HZ, sr); this.doorR = new OnePole().set(DOOR_MUFFLE_HZ, sr);
       this.glue = new K.Compressor(sr, -14, 2.5, 0.012, 0.22, 10, 1.5);
       this.limiter = new K.Limiter(sr, 0.89, 0.0015, 0.09);
+      // Recorded samples taking over the car in hand (P.SAMPLES): a scalar that fades this synth's own
+      // engine and horn out over SAMPLE_FADE seconds, so a page that finds the files halfway through a
+      // corner crossfades into them instead of cutting.
+      this.samplesLevel = 0;
+      this.hornL = new Float32Array(CHUNK); this.hornR = new Float32Array(CHUNK); this.hornSend = new Float32Array(CHUNK);
       this.effL = new Float32Array(CHUNK); this.effR = new Float32Array(CHUNK);
       this.ambL = new Float32Array(CHUNK); this.ambR = new Float32Array(CHUNK);
       this.uiL = new Float32Array(CHUNK); this.uiR = new Float32Array(CHUNK);
@@ -164,12 +172,20 @@ export function defineSynth(K) {
       if (to >= 1) this.outgoing = null;
     }
 
-    /** Road, traffic, rain and horn: everything of the street that the pause silences. */
+    /**
+     * Road, traffic, rain and horn: everything of the street that the pause silences. The horn goes
+     * through its own scratch and is added under (1 - samplesLevel), because a recording of the car in
+     * hand replaces it rather than joining it. The road and the traffic are not the car in hand and stay.
+     */
     _renderStreet(c, outL, outR, send, n) {
       this.road.render(c, outL, outR, send, n);
       this.traffic.render(c, outL, outR, send, n);
       this.rain.render(c, outL, outR, n);
-      this.horn.render(outL, outR, send, n);
+      const hl = this.hornL, hr = this.hornR, hs = this.hornSend;
+      hl.fill(0, 0, n); hr.fill(0, 0, n); hs.fill(0, 0, n);
+      this.horn.render(hl, hr, hs, n);
+      const g = 1 - this.samplesLevel;
+      if (g > 1e-4) { addFaded(hl, outL, n, g, g); addFaded(hr, outR, n, g, g); addFaded(hs, send, n, g, g); }
     }
 
     /** The city heard from inside the garage: quieter and dull behind the door, clearer as it rises. */
@@ -206,6 +222,11 @@ export function defineSynth(K) {
         uiL.fill(0, 0, n); uiR.fill(0, 0, n); send.fill(0, 0, n);
 
         if (c[P.GARAGE] !== this.where) this._moveTo(c[P.GARAGE]);
+        // The recordings, when the page has them: this synth's engine and horn step aside over a fade.
+        const wantSamples = c[P.SAMPLES] > 0.5 ? 1 : 0;
+        const stepSamples = n / (SAMPLES_FADE * sr);
+        const dSamples = wantSamples - this.samplesLevel;
+        this.samplesLevel += dSamples > stepSamples ? stepSamples : dSamples < -stepSamples ? -stepSamples : dSamples;
         this._handOver(c);
         const wasIndoors = this.indoors, inGarage = this.where !== GARAGE.STREET;
         const indoors = inGarage ? Math.min(1, wasIndoors + n / (ROOM_IN * sr)) : Math.max(0, wasIndoors - n / (ROOM_OUT * sr));
@@ -216,6 +237,12 @@ export function defineSynth(K) {
         if (effects > 1e-4) {
           if (this.pauseGain.v > 1e-4 || !paused) {
             this._renderEngine(c, n);
+            // The engine has these three buffers to itself at this point, so scaling them here scales
+            // exactly the car in hand and nothing else of the street that follows.
+            if (this.samplesLevel > 1e-4) {
+              const keep = 1 - this.samplesLevel;
+              for (let i = 0; i < n; i++) { effL[i] *= keep; effR[i] *= keep; send[i] *= keep; }
+            }
             if (!inside) this._renderStreet(c, effL, effR, send, n);
             else if (indoors < 1 || wasIndoors < 1) {
               // The street falls away as the walls close in. The engine does not: it is in the room.

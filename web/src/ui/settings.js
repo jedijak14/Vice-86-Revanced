@@ -125,8 +125,10 @@ const CONTROLS_FIELDS = [
 const GAME_FIELDS = [
   choice('units', 'Units', [{ value: 'kmh', label: 'KM/H' }, { value: 'mph', label: 'MPH' }], 'mph', 'Units of the speed readout.'),
   choice('timeFlow', 'Time flow', [
-    { value: 0, label: 'Paused' }, { value: 1, label: 'Real time' }, { value: 10, label: '10\u00d7' }, { value: 60, label: '60\u00d7' },
-  ], 10, 'How fast the clock runs. At 60\u00d7 a full day takes 24 minutes.'),
+    { value: 0, label: 'Still' }, { value: 1, label: 'Real time' },
+    { value: 10, label: 'Fast · an hour in six minutes' },
+    { value: 60, label: 'Cycle · a day in twenty-four minutes' },
+  ], 60, 'How the sky moves on its own. Cycle turns the whole day while you drive.'),
   choice('startTime', 'Start time', TIME_OPTIONS, 'dusk', 'The hour a drive starts at.'),
   choice('weather', 'Weather', WEATHER_OPTIONS, 'dynamic', 'Dynamic drifts between clear skies, showers and storms.'),
   toggle('reduceFlashing', 'Reduce flashing', false,
@@ -200,10 +202,11 @@ export const PRESETS = Object.freeze({
     antialiasing: 'taa', bloom: 2, motionBlur: 2, filmGrain: true, chromaticAberration: true,
   }),
   ultra: Object.freeze({
-    resolutionScale: 1, dynamicResolution: true, maxPixelRatio: 2, frameCap: 0,
-    shadows: 3, ao: 2, reflections: 3, lights: 3, volumetrics: 1,
-    drawDistance: 3, density: 3, traffic: 3, particles: 2,
-    antialiasing: 'taa', bloom: 2, motionBlur: 3, filmGrain: true, chromaticAberration: true,
+    resolutionScale: 1.25, dynamicResolution: false, maxPixelRatio: 2.5, frameCap: 0,
+    shadows: 4, ao: 3, reflections: 4, lights: 4, volumetrics: 1,
+    drawDistance: 4, density: 3, traffic: 3, particles: 3,
+    antialiasing: 'taa', bloom: 3, motionBlur: 3, filmGrain: true, chromaticAberration: true,
+    hair: true, cloth: true, waterPhysics: true, grade: 'gtav',
   }),
 });
 

@@ -162,6 +162,13 @@ export function createHudModel() {
     crew: '',            // who else is in this room
     purse: '',           // what is in the pocket: the cash, and what it came from
     foot: '',            // on foot: the gun in hand, the wind, what is nearest
+    vitals: '',          // on foot: how much of him is left, when any of it is missing
+    radio: '',           // the station on the dial and what it is playing
+    health: 1,           // 0..1: the walker's wound state, as a bar rather than a number
+    oxygen: 1,           // 0..1: the air left in him
+    airOn: false,        // whether the air bar is news enough to show
+    watch: '',           // inside a watched zone: the lens, or the eyes, that have you
+    jail: '',            // in custody: the bail, the wall, the guard
   };
 }
 
@@ -224,9 +231,48 @@ function footLine(foot) {
   if (!foot || !foot.onFoot) return '';
   const gun = foot.gun ? `${foot.gun} ${foot.magazine}/${foot.reserve}` : 'no gun \u00b7 B to draw';
   const wind = foot.out ? ' \u00b7 winded' : foot.stamina < 0.34 ? ' \u00b7 low wind' : '';
-  const near = foot.boarding ? ' \u00b7 F to get in' : (foot.near ? ' \u00b7 F to get out' : '');
+  // A car within reach says which car it is: his own is a door he left open, and one that is not his is
+  // a car he is about to take off the street, which the street will hold against him.
+  const near = foot.boarding ? (foot.taken ? ' \u00b7 F to take it' : ' \u00b7 F to get in') : (foot.near ? ' \u00b7 F to get out' : '');
   const door = foot.door ? ` \u00b7 ${foot.door}` : '';
   return `${gun}${wind}${near}${door}`;
+}
+
+/**
+ * How much of the walker is left. A full, dry, breathing man needs no line: the row stays dark and
+ * the cluster says nothing. The moment any of it is missing - a wound, a dive, the sea over his head
+ * - the numbers come up, because a number that only appears when it matters is a warning, not clutter.
+ */
+function vitalsLine(foot) {
+  if (!foot || !foot.onFoot) return '';
+  if (foot.dead) return 'down \u00b7 the water or the street got him';
+  const parts = [];
+  const health = foot.health === undefined ? 1 : foot.health;
+  const oxygen = foot.oxygen === undefined ? 1 : foot.oxygen;
+  if (health < 0.995) parts.push(`\u2665 ${Math.round(health * 100)}%`);
+  if (foot.swimming || foot.submerged || oxygen < 0.995) parts.push(`O\u2082 ${Math.round(oxygen * 100)}%`);
+  if (foot.swimming) parts.push(foot.submerged ? 'under' : 'swimming');
+  return parts.join(' \u00b7 ');
+}
+
+/** The radio: which station, and the thing it is playing right now. Empty when the dial is off. */
+function radioLine(radio) {
+  if (!radio || !radio.station) return '';
+  return radio.title ? `${radio.station} \u00b7 ${radio.title}` : radio.station;
+}
+
+/** Inside a watched zone, who has you: the bracket on the corner, or the pavement itself. */
+function watchLine(w) {
+  if (!w) return '';
+  if (w.camera) return w.people ? `on camera \u00b7 and ${w.people} more pair${w.people === 1 ? '' : 's'} of eyes` : 'on camera \u00b7 the tape is evidence';
+  return `${w.people} pair${w.people === 1 ? '' : 's'} of eyes on it`;
+}
+
+/** In custody: what the honest door costs, and how far the other one has got. */
+function jailLine(j) {
+  if (!j || !j.jailed) return '';
+  const pct = Math.round(j.escape * 100);
+  return `bail $${j.bail} \u00b7 E pays it \u00b7 hold Space for the wall${pct > 0 ? ` \u00b7 bars ${pct}%` : ''}${j.guardNear ? ' \u00b7 guard close' : ''}`;
 }
 
 function crewLine(net) {
@@ -293,6 +339,14 @@ export function updateHudModel(model, input, units, now) {
   model.crew = crewLine(input.net);
   model.purse = purseLine(input.purse);
   model.foot = footLine(input.foot);
+  model.vitals = vitalsLine(input.foot);
+  model.radio = radioLine(input.radio);
+  const walker = input.foot || null;
+  model.health = walker && walker.health !== undefined ? walker.health : 1;
+  model.oxygen = walker && walker.oxygen !== undefined ? walker.oxygen : 1;
+  model.airOn = !!walker && (walker.oxygen !== undefined && walker.oxygen < 0.995 || !!walker.swimming || !!walker.submerged);
+  model.watch = watchLine(input.watch);
+  model.jail = jailLine(input.jail);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

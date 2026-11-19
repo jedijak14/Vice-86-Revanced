@@ -77,6 +77,106 @@ export function sampleClip(clip, time, pose, { weight = 1, only = null } = {}) {
 }
 const scratchQuat = new Float32Array(4);
 
+/**
+ * Re-author a clip from another rest pose onto this rig, once, at load: resampled to a fixed rate,
+ * each key carrying the rotation that puts our bones where the clip put the reference figure's bones
+ * in world space, re-localised into our hierarchy. `corr` is the per-bone constant pair the rigging
+ * tool measured: `B`, the reference bone's bind rotation (where a silent channel leaves the bone
+ * pointing), and `D`, the rotation from our bone's offset onto theirs (the difference between rests).
+ * Without this a clip authored against a T-pose would swing an A-posed figure from the wrong start.
+ */
+export function bakeClipForRest(clip, corr, rig, fps = 30) {
+  const { gltf, parents } = rig;
+  const names = gltf.nodes.map((n) => n.name);
+  const rotCh = new Map();
+  const trCh = new Map();
+  for (const ch of clip.channels) {
+    if (ch.path === 'rotation') rotCh.set(ch.node, ch);
+    else if (ch.path === 'translation') trCh.set(ch.node, ch);
+  }
+  const jointNodes = rig.joints.slice();
+  const localAt = (ch, t, out) => {
+    const { index, next, k } = keyAt(ch.input, t);
+    const a = ch.output.array;
+    const comps = ch.output.components;
+    if (ch.path === 'rotation') {
+      if (next === index) for (let i = 0; i < 4; i++) out[i] = a[index * 4 + i];
+      else slerpShort(a, index * 4, a, next * 4, k, out, 0);
+    } else {
+      for (let i = 0; i < comps; i++) out[i] = a[index * comps + i] * (1 - k) + a[next * comps + i] * k;
+    }
+    return out;
+  };
+  const steps = Math.max(1, Math.ceil(clip.duration * fps));
+  const times = new Float32Array(steps + 1);
+  for (let i = 0; i <= steps; i++) times[i] = (clip.duration * i) / steps;
+  const Mq = new Float32Array(gltf.nodes.length * 4);
+  const Mp = new Float32Array(gltf.nodes.length * 4);
+  const Dq = new Float32Array(gltf.nodes.length * 4);
+  const local = new Float32Array(4);
+  const fixed = new Float32Array(4);
+  const out = {};
+  for (const node of jointNodes) {
+    out[node] = { rot: new Float32Array((steps + 1) * 4), tr: null };
+    const c = corr[names[node]] || {};
+    const d = c.D || [0, 0, 0, 1];
+    Dq.set(d, node * 4);
+  }
+  const trNodes = [...trCh.keys()].filter((n) => jointNodes.includes(n));
+  const trOut = new Map(trNodes.map((n) => [n, new Float32Array((steps + 1) * 3)]));
+  const tq = new Float32Array(3);
+  for (let s = 0; s <= steps; s++) {
+    const t = times[s];
+    for (const i of rig.order) {
+      const name = names[i];
+      const c = corr[name] || {};
+      const ch = rotCh.get(i);
+      if (ch) localAt(ch, t, local);
+      else { const b = c.B || [0, 0, 0, 1]; local.set(b); }
+      if (!jointNodes.includes(i)) { Mq[i * 4 + 3] = 1; Mp[i * 4 + 3] = 1; continue; }
+      const p = parents[i];
+      const pq = p >= 0 ? Mq.subarray(p * 4, p * 4 + 4) : IDENTITY_QUAT;
+      qmulInto(pq, local, Mq, i * 4);                       // the reference figure's world rotation here
+      qmulInto(Mq.subarray(i * 4, i * 4 + 4), Dq.subarray(i * 4, i * 4 + 4), Mp, i * 4);  // ...carried onto our rest
+      const pp = p >= 0 ? Mp.subarray(p * 4, p * 4 + 4) : IDENTITY_QUAT;
+      qconjMulInto(pp, Mp.subarray(i * 4, i * 4 + 4), out[i].rot, s * 4);   // re-localised in our hierarchy
+    }
+    for (const n of trNodes) {
+      localAt(trCh.get(n), t, tq);
+      const c = corr[names[n]] || {};
+      const off = c.t || [0, 0, 0];
+      trOut.get(n)[s * 3] = tq[0] + off[0];
+      trOut.get(n)[s * 3 + 1] = tq[1] + off[1];
+      trOut.get(n)[s * 3 + 2] = tq[2] + off[2];
+    }
+  }
+  const channels = [];
+  for (const node of jointNodes) {
+    channels.push({ node, path: 'rotation', input: times, output: { array: out[node].rot, components: 4 }, interpolation: 'LINEAR' });
+  }
+  for (const n of trNodes) {
+    channels.push({ node: n, path: 'translation', input: times, output: { array: trOut.get(n), components: 3 }, interpolation: 'LINEAR' });
+  }
+  return { name: clip.name, duration: clip.duration, channels, sourceNodes: null, baked: true };
+}
+
+const IDENTITY_QUAT = new Float32Array([0, 0, 0, 1]);
+
+function qmulInto(a, b, out, offset) {
+  const ax = a[0], ay = a[1], az = a[2], aw = a[3];
+  const bx = b[0], by = b[1], bz = b[2], bw = b[3];
+  out[offset] = aw * bx + ax * bw + ay * bz - az * by;
+  out[offset + 1] = aw * by - ax * bz + ay * bw + az * bx;
+  out[offset + 2] = aw * bz + ax * by - ay * bx + az * bw;
+  out[offset + 3] = aw * bw - ax * bx - ay * by - az * bz;
+}
+
+function qconjMulInto(a, b, out, offset) {
+  fixedConj[0] = -a[0]; fixedConj[1] = -a[1]; fixedConj[2] = -a[2]; fixedConj[3] = a[3];
+  qmulInto(fixedConj, b, out, offset);
+}
+const fixedConj = new Float32Array(4);
+
 /** A pose: the rest transform of every node, and the places a clip has changed it. */
 export function createPose(gltf) {
   const count = gltf.nodes.length;
@@ -243,7 +343,9 @@ export class Player {
     this.overTime = 0;
     this.blend = 0;                    // 0..1 cross-fade between the previous clip and the new one
     this.previous = null;
-    this._fadeSeconds = 0.18;
+    this._fadeSeconds = 0.22;
+    /** Radians of forward lean at the hips, set by whoever owns the body: a runner leans, a walker barely. */
+    this.lean = 0;
   }
 
   has(name) { return this.byName.has(name); }
@@ -309,6 +411,21 @@ export class Player {
   /** Solve the rig: pose is rebuilt from rest every frame, which is what makes a dropped clip impossible to stick. */
   solve(height = 1) {
     const pose = resetPose(this.rig.gltf, this.pose);
+    if (this.lean) {
+      // A body that leans is one the clip cannot know about: the lean is the owner's, added at the hips
+      // in local space, so a runner tips into his stride whatever the clip's own posture says.
+      const i = this.rig.node('hips');
+      if (i >= 0) {
+        const h = this.lean * 0.5, sl = Math.sin(h), cl = Math.cos(h);
+        const q = [sl, 0, 0, cl];
+        const o = i * 4;
+        const x = pose.rotation[o], y = pose.rotation[o + 1], z = pose.rotation[o + 2], w = pose.rotation[o + 3];
+        pose.rotation[o] = q[3] * x + q[0] * w + q[1] * z - q[2] * y;
+        pose.rotation[o + 1] = q[3] * y - q[0] * z + q[1] * w + q[2] * x;
+        pose.rotation[o + 2] = q[3] * z + q[0] * y - q[1] * x + q[2] * w;
+        pose.rotation[o + 3] = q[3] * w - q[0] * x - q[1] * y - q[2] * z;
+      }
+    }
     if (this.previous && this.blend < 1) {
       sampleClip(this.previous, this.time, pose, { weight: 1 - this.blend });
       if (this.main) sampleClip(this.main, this.time, pose, { weight: this.blend });

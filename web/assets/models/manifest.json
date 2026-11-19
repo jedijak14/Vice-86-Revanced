@@ -32,7 +32,21 @@
    "fileCount": 5,
    "bytes": 1911016,
    "note": "KayKit Character Animations 1.1: 131 clips on the Rig_Medium humanoid skeleton (CC0, Kay Lousberg), mirrored by NoLimitNexus."
+  },
+  {
+   "pack": "player",
+   "source": null,
+   "ref": "c046410",
+   "licence": "Project owner's own",
+   "files": [
+    "player/model.glb",
+    "player/rig.json",
+    "player/rigged.glb"
+   ],
+   "fileCount": 3,
+   "bytes": 18335367,
+   "note": "The player's body: one figure the project owner uploaded, 370 304 triangles, quantized geometry and webp textures written by gltfpack. The upload has no skin and no animations; rigged.glb is the same figure shaped into an A-pose and bound to 23 joints in KayKit's names by tools/rig_player.py, and rig.json carries the per-bone constants that re-home the vendored clips onto that rest. model.glb stays as the source of record; the game fetches rigged.glb and rig.json."
   }
  ],
- "totalBytes": 3592864
+ "totalBytes": 21928231
 }

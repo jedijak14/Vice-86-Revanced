@@ -1,0 +1,16 @@
+{
+  "name": "vice-86-revanced",
+  "productName": "Vice 86 Revanced",
+  "version": "0.9.0",
+  "description": "The street, in a window: the browser build of Vice 86 Revanced wrapped in Electron.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  },
+  "author": "jedijak14",
+  "license": "UNLICENSED"
+}

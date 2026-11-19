@@ -219,13 +219,57 @@ html, body {
 }
 .hud.is-on { opacity: 1; visibility: visible; transition: opacity 300ms ease-out, visibility 0s; }
 
-/* ---- clock and district banner, top left */
+/* ---- the top right: hour, stars, money - the cluster the reference screenshots carry.
+   The money is the loud one: tabular, green, and the only thing up there that is never dim. */
 
-.hud__top {
+.hud__topright {
+  position: absolute;
+  top: calc(4 * var(--u) + var(--safe-top));
+  right: calc(5 * var(--u) + var(--safe-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(0.35 * var(--u));
+}
+.hud__topright .hud__clock { --size: max(10px, calc(1.05 * var(--u))); opacity: 0.85; }
+.hud__topright .hud__row--purse .hud__row-icon,
+.hud__topright .hud__row--purse .hud__row-label { display: none; }
+.hud__topright .hud__row--purse .hud__row-text {
+  color: #a9e07c;
+  font-size: max(13px, calc(1.55 * var(--u)));
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- the top left: the two bars, health over air, exactly as wide as the reference's */
+
+.hud__vitals {
   position: absolute;
   top: calc(5 * var(--u) + var(--safe-top));
   left: calc(5 * var(--u) + var(--safe-left));
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.32 * var(--u));
+  width: calc(15 * var(--u));
+  opacity: 0;
+  transition: opacity 200ms ease-out;
 }
+.hud__vitals.is-on { opacity: 1; }
+.hud__vital { display: flex; align-items: center; gap: calc(0.4 * var(--u)); }
+.hud__vital-icon { width: max(10px, calc(1.05 * var(--u))); height: max(10px, calc(1.05 * var(--u))); color: var(--ink-35); }
+.hud__vital-track {
+  flex: 1;
+  height: calc(0.62 * var(--u));
+  background: rgba(6, 8, 12, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.hud__vital-fill { display: block; height: 100%; width: 100%; transition: width 160ms linear; }
+.hud__vital-fill--health { background: linear-gradient(90deg, #5fbe6a, #8fe08a); }
+.hud__vital-fill--air { background: linear-gradient(90deg, #4fb7d8, #8fe3f4); }
+.hud__vital--air { opacity: 0; transition: opacity 200ms ease-out; }
+.hud__vital--air.is-on { opacity: 1; }
 /* Paloma PD: what the dispatch is doing about the player (src/game/police.js). One line under
    the clock, in the same small capitals as the district name, with the heat as three pips. */
 .hud__police {
@@ -255,7 +299,17 @@ html, body {
 .ui.is-touch .hud__police { justify-content: center; }
 
 /* One line each for the job, the race and the room, under the police line. */
-.hud__rows { display: flex; flex-direction: column; gap: calc(0.25 * var(--u)); margin-top: calc(0.45 * var(--u)); }
+/* Everything the street has to say stacks above the map, where the objectives sit in the
+   reference: small capitals, hard shadow, and nothing between them and the road. */
+.hud__rows {
+  position: absolute;
+  left: calc(5 * var(--u) + var(--safe-left));
+  bottom: calc(31 * var(--u) + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(0.25 * var(--u));
+}
 .hud__row {
   display: flex;
   align-items: center;
@@ -287,11 +341,11 @@ html, body {
 .hud__banner {
   --size: calc(5.2 * var(--u));
   position: absolute;
-  top: calc(5 * var(--u));   /* 10u from the top of the screen */
-  left: 0;
+  top: calc(5 * var(--u));   /* the district entry flash, centred like a title card */
+  left: 50%;
   padding-left: calc(1.8 * var(--u));
   white-space: nowrap;
-  transform: translateX(calc(-3 * var(--u))) var(--lean-type);
+  transform: translateX(calc(-50% - 3 * var(--u))) var(--lean-type);
   transform-origin: left center;
   opacity: 0;
   transition: opacity 400ms ease-out, transform 0s 400ms;
@@ -320,6 +374,11 @@ html, body {
 }
 .hud__map-view {
   position: absolute;
+  /* The reference map is a rounded plate with a hard rim, not a window: give it both. */
+  border-radius: calc(0.9 * var(--u));
+  border: calc(0.24 * var(--u)) solid rgba(8, 10, 14, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 calc(0.5 * var(--u)) calc(1.4 * var(--u)) rgba(0, 0, 0, 0.45);
+  overflow: hidden;
   inset: 0;
   border-radius: 50%;
   overflow: hidden;

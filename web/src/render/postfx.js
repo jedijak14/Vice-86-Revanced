@@ -220,11 +220,18 @@ export class PostChain {
     gl.bindFramebuffer(gl.FRAMEBUFFER, direct ? null : post.ldrFbo);
     if (direct) gl.viewport(0, 0, p.canvasWidth, p.canvasHeight); else gl.viewport(0, 0, width, height);
     if (P.tonemap.use()) {
-      const g = p.grade || NEUTRAL_GRADE, tint = g.tint || NEUTRAL_GRADE.tint, shadows = g.shadowsTint || NEUTRAL_GRADE.shadowsTint;
+      const g = p.grade || NEUTRAL_GRADE;
+      // The gtav grade: the look of the reference screenshots - warm highlights, teal in the shade,
+      // a tenth more contrast and a little more colour than the sensor recorded. Ultra's switch.
+      const gtav = q.grade === 'gtav';
+      const tint0 = g.tint || NEUTRAL_GRADE.tint, shadow0 = g.shadowsTint || NEUTRAL_GRADE.shadowsTint;
+      const tint = gtav ? [tint0[0] * 1.05, tint0[1] * 0.99, tint0[2] * 0.93] : tint0;
+      const shadows = gtav ? [shadow0[0] * 0.88, shadow0[1] * 1.0, shadow0[2] * 1.08] : shadow0;
+      const gContrast = (g.contrast || 1) * (gtav ? 1.1 : 1), gSaturation = (g.saturation || 1) * (gtav ? 1.08 : 1);
       P.tonemap.texture('uColor', colour); P.tonemap.texture('uBloom', bloom); P.tonemap.texture('uExposureTex', correction);
       gl.uniform4f(P.tonemap.loc('uTone'), p.exposure, this.bloomAmount, Math.min(1, Math.max(0, p.fade || 0)), p.time % 64);
-      gl.uniform4f(P.tonemap.loc('uGradeTint'), lean(tint[0]), lean(tint[1]), lean(tint[2]), lean(g.contrast));
-      gl.uniform4f(P.tonemap.loc('uGradeShadow'), lean(shadows[0]), lean(shadows[1]), lean(shadows[2]), CAMERA_SATURATION * lean(g.saturation));
+      gl.uniform4f(P.tonemap.loc('uGradeTint'), lean(tint[0]), lean(tint[1]), lean(tint[2]), lean(gContrast));
+      gl.uniform4f(P.tonemap.loc('uGradeShadow'), lean(shadows[0]), lean(shadows[1]), lean(shadows[2]), CAMERA_SATURATION * lean(gSaturation));
       gl.uniform4f(P.tonemap.loc('uFx'), VIGNETTE, q.filmGrain ? GRAIN : 0, q.chromaticAberration ? FRINGE + SPEED_FRINGE * boost : 0, p.temporal ? SHARPEN : 0);
       gl.uniform4f(P.tonemap.loc('uSpeed'), SPEED_STRETCH * boost, 0, 0, 0);
       this.draw();

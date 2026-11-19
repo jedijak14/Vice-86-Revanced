@@ -6,6 +6,7 @@
 
 import { createDsp } from './dsp/index.js';
 import { createHost } from './host.js';
+import { createSamples } from './samples.js';
 import { createSiren } from './siren.js';
 import { readVec3, panOf, distanceGain, dopplerRatio, TrafficMatcher } from './spatial.js';
 
@@ -14,6 +15,14 @@ const { P, EV, GARAGE } = K;
 
 const STALE_SECONDS = 0.3;                // no update() for this long counts as paused
 const TRAFFIC_MAX_DISTANCE = 160;
+const ENGINE_RUNNING_RPM = 220;           // below this the car in hand is off, and its loops are stopped
+
+/** Which recording an impact kind plays. Anything unlisted is metal, as `K.impactCode` also decides. */
+const SAMPLED_IMPACT = {
+  wall: 'hit_thud', building: 'hit_thud', thud: 'hit_thud', ground: 'hit_thud',
+  vehicle: 'hit_metal', car: 'hit_metal', traffic: 'hit_metal', pole: 'hit_metal', barrier: 'hit_metal', metal: 'hit_metal',
+  glass: 'hit_glass', scrape: 'hit_scrape', splash: 'splash', water: 'splash',
+};
 
 /**
  * @param {{ seed?: number, scope?: object }} options
@@ -31,14 +40,28 @@ export function createAudio(options = {}) {
   const listenerPos = [0, 0, 0], listenerFwd = [0, 0, -1], listenerVel = [0, 0, 0];
   const pos = [0, 0, 0], vel = [0, 0, 0];
   let sinceUpdate = 0, statsTimer = 0;
+  // The recordings of the car in hand (samples.js), built on the first update() once the page has been
+  // unlocked, with the voice the game last named loaded first. Until they are in, `ready` is false on
+  // that object and the synth speaks for the car as it always did; if they never arrive it keeps doing so.
+  let samples = null, samplesFailed = false, sampleVoice = 'v8';
+  let lastGear = 0, engineRunning = false;
+  let playerHornOn = false, synthHornState = 0;
+  /** Traffic cars honking through the synth because there are no recordings: ids, so one car is one horn. */
+  const synthHorns = new Set();
 
   const audio = {
     /** True once the context is running and the synth is in the graph. */
     get ready() { return host.ready; },
+    /** The page's AudioContext, once unlocked: what the radio schedules on (audio/radio.js). */
+    get context() { return host.context || null; },
     /** 'worklet', 'script' (main-thread fallback) or 'none'. */
     get mode() { return host.mode; },
     /** Last stats report from the synth (peak, limiter gain, compression), refreshed about twice a second. */
     get stats() { return host.stats; },
+    /** True once the recorded engine, horn and impacts are decoded and speaking for the car in hand. */
+    get sampled() { return !!(samples && samples.ready); },
+    /** What the sample player has loaded and dropped, for the diagnostics readout. */
+    get sampleStats() { return samples ? samples.stats : null; },
     unlock() { host.unlock(); },
     /** { master, effects }; other fields (an old stored `music`, for instance) are ignored. */
     setVolumes(v) {
@@ -49,9 +72,14 @@ export function createAudio(options = {}) {
       state[P.EFFECTS] = volumes.effects;
     },
     update, setCar, garage, impact, horn, thunder, ui, afterfire, siren,
+    play, trafficHorn, door, starter, shift,
     suspend() { host.suspend(); },
     resume() { host.resume(); },
-    dispose() { if (sirenVoice) { sirenVoice.dispose(); sirenVoice = null; } host.dispose(); },
+    dispose() {
+      if (sirenVoice) { sirenVoice.dispose(); sirenVoice = null; }
+      if (samples) { samples.dispose(); samples = null; }
+      host.dispose();
+    },
   };
 
   /**
@@ -67,6 +95,8 @@ export function createAudio(options = {}) {
   function setCar(spec) {
     if (!spec) return;
     state[P.VOICE] = K.voiceCode(spec.voice);
+    // The same name selects the recordings: the sample player keeps one set of loops per voice.
+    if (typeof spec.voice === 'string' && spec.voice) sampleVoice = spec.voice;
     state[P.IDLE] = num(spec.idle, 0); state[P.LIMITER] = num(spec.limiter, 0);
     if (spec.redline > 1000) state[P.REDLINE] = spec.redline;
   }
@@ -80,7 +110,10 @@ export function createAudio(options = {}) {
    */
   function garage(event) {
     if (event === 'enter') state[P.GARAGE] = GARAGE.BROWSING;
-    else if (event === 'drive') { if (state[P.GARAGE] === GARAGE.BROWSING) state[P.GARAGE] = GARAGE.LEAVING; }
+    else if (event === 'drive') {
+      if (state[P.GARAGE] === GARAGE.BROWSING) state[P.GARAGE] = GARAGE.LEAVING;
+      starter();                                  // the recording cranks it; the synth's own engine fades
+    }
     else if (event === 'leave') state[P.GARAGE] = GARAGE.STREET;
     else if (event === 'car' || event === 'colour') ui(event);
   }
@@ -111,6 +144,7 @@ export function createAudio(options = {}) {
       state[P.NEON] = env.neon === undefined || env.neon === null ? -1 : clamp01(env.neon);
     }
     updateTraffic(s.traffic, dt);
+    updateSamples(car);
     host.postState(state);
     // Stats twice a second for whoever is diagnosing.
     statsTimer += dt;
@@ -139,12 +173,78 @@ export function createAudio(options = {}) {
     }
   }
 
+  /** Builds the sample player the first time the page is unlocked and able to play into something. */
+  function ensureSamples() {
+    if (samples || samplesFailed) return;
+    if (!host.ready || !host.context || !host.output) return;
+    if (typeof host.context.createBufferSource !== 'function') { samplesFailed = true; return; }
+    try {
+      samples = createSamples({
+        context: host.context,
+        destination: host.output,
+        // The car in hand first, then the rest of the fleet, so a garage visit never waits on a V12.
+        voices: [sampleVoice, 'v8', 'v12', 'flat12', 'flat6t'],
+        essentialOnly: !!options.essentialOnly,
+        fetchFile: options.fetchFile,
+        decode: options.decode,
+        onError: (error) => { if (options.log) options.log(error); },
+      });
+    } catch (error) {
+      samples = null; samplesFailed = true;
+      if (options.log) options.log(error);
+    }
+  }
+
+  /**
+   * Hands the car in hand to its recordings, and tells the synth with P.SAMPLES whether they have it.
+   * Also notices the two things the game does not announce as events: the engine catching, and a gear
+   * going in under load -- both are simply read off the state the game already sends every frame.
+   */
+  function updateSamples(car) {
+    ensureSamples();
+    const rpm = car ? num(car.rpm, 0) : 0;
+    const running = rpm > ENGINE_RUNNING_RPM && state[P.GARAGE] !== GARAGE.BROWSING;
+    if (running && !engineRunning && samples && samples.ready) starter();
+    const gear = car ? Math.round(num(car.gear, 0)) : 0;
+    if (samples && samples.ready && running && gear > lastGear && rpm > 1800 && num(car.throttle, 0) > 0.25) shift();
+    lastGear = gear; engineRunning = running;
+    if (!samples) { state[P.SAMPLES] = 0; return; }
+    samples.setEngine({
+      voice: sampleVoice,
+      running,
+      rpm,
+      throttle: car ? num(car.throttle, 0) : 0,
+      load: car ? num(car.load, num(car.throttle, 0)) : 0,
+      cabin: car ? num(car.cabin, 0) : 0,
+      // With the car's own position the recordings fade and pan as the player walks away from a car he
+      // has left idling, instead of following his head at full level the way a centred voice would.
+      position: car && car.position ? car.position : null,
+      listener: car && car.position ? listenerPos : null,
+      listenerForward: listenerFwd,
+    });
+    samples.settle();
+    state[P.SAMPLES] = samples.ready ? 1 : 0;
+  }
+
   /**
    * @param {number} strength 0..1
    * @param {Array|object} [position] world position; omitted means at the car
    * @param {string} [kind] 'vehicle' | 'wall' | 'pole' | 'barrier' | 'scrape' | 'glass' | 'splash'
    */
   function impact(strength, position, kind) {
+    const level = clamp01(strength);
+    // The recordings carry each material's own resonances, so they get the impact when they are there;
+    // the synth's version is the fallback, and it is a good one -- it is the same model, computed live.
+    if (samples && samples.ready) {
+      samples.play(SAMPLED_IMPACT[kind] || 'hit_metal', {
+        gain: level,
+        rate: 1 + (level - 0.5) * 0.12,          // a heavier blow is a fraction slower and darker
+        position: position || null,
+        listener: position ? listenerPos : null,
+        forward: listenerFwd,
+      });
+      return;
+    }
     let pan = 0, distance = 0;
     if (position) {
       readVec3(position, pos);
@@ -152,9 +252,58 @@ export function createAudio(options = {}) {
       const dx = pos[0] - listenerPos[0], dy = pos[1] - listenerPos[1], dz = pos[2] - listenerPos[2];
       distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
-    host.postEvent(EV.IMPACT, clamp01(strength), pan, distance, K.impactCode(kind));
+    host.postEvent(EV.IMPACT, level, pan, distance, K.impactCode(kind));
   }
-  function horn(on) { host.postEvent(EV.HORN, on ? 1 : 0); }
+
+  /** The player's own horn: a recording held down while the key is, the synth's voice otherwise. */
+  function horn(on) {
+    playerHornOn = !!on;
+    if (samples && samples.ready) samples.setHorn(playerHornOn);
+    syncSynthHorn();
+  }
+
+  /**
+   * A traffic car's horn, from where that car is. `id` keeps one car to one horn: pass the same id with
+   * `on` false when it gives up, and the same id with `on` true each frame to move it with the car.
+   * @param {string|number} id the car
+   * @param {boolean} on
+   * @param {{ position: Array|object, listener?: Array|object, forward?: Array|object, kind?: string }} place
+   *        `kind: 'low'` is a truck's or a bus's horn; `listener` and `forward` place it in the world.
+   * @returns {boolean} whether a horn is sounding
+   */
+  function trafficHorn(id, on, place) {
+    if (samples && samples.ready) return samples.trafficHorn(id, on, place);
+    // No recordings: the synth's horn is one centred voice, so a junction full of them can only be one
+    // beep. Say it once, from the middle, rather than not at all -- "you are in the way" is the whole
+    // point of the honk, and losing it because an asset did not arrive would be the worse failure.
+    const key = String(id);
+    if (on) { synthHorns.add(key); syncSynthHorn(); return true; }
+    synthHorns.delete(key);
+    syncSynthHorn();
+    return false;
+  }
+
+  /** The synth's horn speaks for the player and for any traffic car while there are no recordings. */
+  function syncSynthHorn() {
+    const on = playerHornOn || synthHorns.size > 0 ? 1 : 0;
+    if (on !== synthHornState) { synthHornState = on; host.postEvent(EV.HORN, on); }
+  }
+
+  /**
+   * Plays a recording by name, with or without '.wav'. Returns false when it is not loaded -- the
+   * low-memory budget deliberately leaves the impacts out -- or when too many are already sounding.
+   * @param {string} name
+   * @param {{ gain?: number, rate?: number, pan?: number, position?: Array, listener?: Array, forward?: Array }} [opts]
+   */
+  function play(name, opts) {
+    return !!(samples && samples.ready && samples.play(name, opts));
+  }
+  /** The starter motor cranking the car in hand; the recordings catch it, the synth fades out. */
+  function starter() { play('starter'); }
+  /** The gearbox's dogs going in. */
+  function shift() { play('shift'); }
+  /** A car door: the handle, the swing and the slam. `heavy` is a thicker door at a lower rate. */
+  function door(heavy) { play('door', { rate: heavy ? 0.86 : 1 }); }
   function thunder(distance) { host.postEvent(EV.THUNDER, Math.max(0, num(distance, 1000))); }
   function ui(kind) { host.postEvent(EV.UI, K.uiCode(kind)); }
   /** Exhaust pops and bangs, scaled by strength 0..1 (lift-off, up-shifts, nitrous cut). */

@@ -21,7 +21,7 @@ export const KEYBOARD_HELP = Object.freeze([
   { action: 'handbrake', label: 'Handbrake · fire (on foot)', keys: ['Space'] },
   { action: 'boost', label: 'Nitrous · run (on foot)', keys: ['Shift'] },
   { action: 'lookBack', label: 'Look back · crouch (on foot)', keys: ['Q'] },
-  { action: 'foot', label: 'Get out, get back in', keys: ['F'] },
+  { action: 'foot', label: 'Get out, get back in, take a car off the street', keys: ['F'] },
   { action: 'weapon', label: 'Draw or stow the gun', keys: ['B'] },
   { action: 'shop', label: 'Use a door · shops, hold-ups, a bag of goods', keys: ['E'] },
 
