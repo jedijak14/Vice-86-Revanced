@@ -10,8 +10,7 @@ export const PRESET_DEFAULTS = Object.freeze({
   low: { resolutionScale: 0.7, maxPixelRatio: 1, shadows: 1, ao: 0, reflections: 0, antialiasing: 'fxaa', bloom: 1, motionBlur: 0, depthOfField: 0, lights: 0, drawDistance: 0, particles: 0, volumetrics: 0, filmGrain: false, chromaticAberration: false },
   medium: { resolutionScale: 0.85, maxPixelRatio: 1, shadows: 2, ao: 1, reflections: 1, antialiasing: 'taa', bloom: 1, motionBlur: 1, depthOfField: 1, lights: 1, drawDistance: 1, particles: 1, volumetrics: 0, filmGrain: true, chromaticAberration: false },
   high: { resolutionScale: 1, maxPixelRatio: 1.5, shadows: 3, ao: 2, reflections: 2, antialiasing: 'taa', bloom: 2, motionBlur: 2, depthOfField: 2, lights: 2, drawDistance: 2, particles: 2, volumetrics: 1, filmGrain: true, chromaticAberration: true },
-  ultra: { resolutionScale: 1, maxPixelRatio: 2, shadows: 3, ao: 2, reflections: 3, antialiasing: 'taa', bloom: 2, motionBlur: 3, depthOfField: 3, lights: 3, drawDistance: 3, particles: 2, volumetrics: 1, filmGrain: true, chromaticAberration: true },
-  ultraHigh: { resolutionScale: 1.25, maxPixelRatio: 2.5, shadows: 4, ao: 3, reflections: 4, antialiasing: 'taa', bloom: 3, motionBlur: 3, depthOfField: 3, lights: 4, drawDistance: 3, particles: 3, volumetrics: 1, filmGrain: true, chromaticAberration: true },
+  ultra: { resolutionScale: 1.25, maxPixelRatio: 2.5, shadows: 4, ao: 3, reflections: 4, antialiasing: 'taa', bloom: 3, motionBlur: 3, depthOfField: 3, lights: 4, drawDistance: 4, particles: 3, volumetrics: 1, filmGrain: true, chromaticAberration: true, hair: true, cloth: true, waterPhysics: true, grade: 'gtav' },
 });
 
 // One row per level of each setting. These tables are the tuning surface of the renderer.
@@ -70,7 +69,7 @@ const PARTICLES = [{ max: 384 }, { max: 1536 }, { max: 4096 }, { max: 8192 }];
 // shorter shadow and reflection reach, and a particle budget that fits sparks from one crash.
 const ULTRA_LOW = Object.freeze({ maxLights: 64, sizeNear: 24, perCell: 12, particles: 128, reach: 0.55 });
 // Detail level handed to surface families in uQuality.x: micro detail is skipped below 0.5.
-const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1, ultraHigh: 1.15 };
+const DETAIL = { ultraLow: 0, low: 0.25, medium: 0.5, high: 0.8, ultra: 1.15 };
 /**
  * What a small-memory device is held to, whatever preset it asked for. These are not about frame rate: they
  * are the sizes of the buffers that stay alive between frames — the internal resolution (every target in the

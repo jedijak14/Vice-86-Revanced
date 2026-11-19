@@ -84,7 +84,7 @@ export const CROWD_BY_DENSITY = Object.freeze([
 
 /** The same table by graphics preset: a slow machine spends its draw calls elsewhere. */
 /** How many bodies are animated at once, per quality tier: a rigged person costs a skin solve every frame. */
-export const PEOPLE_BY_TIER = Object.freeze({ ultraLow: 2, low: 5, medium: 9, high: 13, ultra: 18, ultraHigh: 26 });
+export const PEOPLE_BY_TIER = Object.freeze({ ultraLow: 2, low: 5, medium: 9, high: 13, ultra: 26 });
 
 /**
  * Where the pavement is beside one lane, at one station, on one side.

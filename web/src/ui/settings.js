@@ -12,9 +12,9 @@ export const SETTINGS_VERSION = 1;
 export const STORAGE_KEY = 'vice86.settings';
 
 /** Concrete presets, weakest first. The order is the scale Auto moves along. */
-export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra', 'ultraHigh']);
+export const PRESET_NAMES = Object.freeze(['ultraLow', 'low', 'medium', 'high', 'ultra']);
 /** Every value the preset selector can show. */
-export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'ultraHigh', 'custom']);
+export const PRESET_CHOICES = Object.freeze(['auto', 'ultraLow', 'low', 'medium', 'high', 'ultra', 'custom']);
 
 /** Named times of day (ARCHITECTURE section 8). `hours` is passed to actions.setTime as a convenience. */
 export const TIME_OPTIONS = Object.freeze([
@@ -69,7 +69,7 @@ const LOW_TO_ULTRA = ['Low', 'Medium', 'High', 'Ultra'];
 const GRAPHICS_FIELDS = [
   choice('preset', 'Preset', [
     { value: 'auto', label: 'Auto' }, { value: 'ultraLow', label: 'Ultra Low' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'ultraHigh', label: 'Ultra High' }, { value: 'custom', label: 'Custom' },
+    { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' }, { value: 'custom', label: 'Custom' },
   ], 'auto', 'Auto reads your graphics hardware, picks a starting preset and corrects it once from measured frame times. Changing any option below switches to Custom.'),
 
   range('resolutionScale', 'Resolution scale', 0.5, 1, 0.05, 0.85, percent,
@@ -202,18 +202,11 @@ export const PRESETS = Object.freeze({
     antialiasing: 'taa', bloom: 2, motionBlur: 2, filmGrain: true, chromaticAberration: true,
   }),
   ultra: Object.freeze({
-    resolutionScale: 1, dynamicResolution: true, maxPixelRatio: 2, frameCap: 0,
-    shadows: 3, ao: 2, reflections: 3, lights: 3, volumetrics: 1,
-    drawDistance: 3, density: 3, traffic: 3, particles: 2,
-    antialiasing: 'taa', bloom: 2, motionBlur: 3, filmGrain: true, chromaticAberration: true,
-  }),
-  // Ultra High: the preset for a machine with nothing else to do. Supersampled, every table at its
-  // new top row, and the dynamic-resolution governor switched off so the supersample holds.
-  ultraHigh: Object.freeze({
     resolutionScale: 1.25, dynamicResolution: false, maxPixelRatio: 2.5, frameCap: 0,
     shadows: 4, ao: 3, reflections: 4, lights: 4, volumetrics: 1,
-    drawDistance: 3, density: 3, traffic: 3, particles: 3,
+    drawDistance: 4, density: 3, traffic: 3, particles: 3,
     antialiasing: 'taa', bloom: 3, motionBlur: 3, filmGrain: true, chromaticAberration: true,
+    hair: true, cloth: true, waterPhysics: true, grade: 'gtav',
   }),
 });
 
