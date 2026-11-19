@@ -164,6 +164,8 @@ export function createHudModel() {
     foot: '',            // on foot: the gun in hand, the wind, what is nearest
     vitals: '',          // on foot: how much of him is left, when any of it is missing
     radio: '',           // the station on the dial and what it is playing
+    watch: '',           // inside a watched zone: the lens, or the eyes, that have you
+    jail: '',            // in custody: the bail, the wall, the guard
   };
 }
 
@@ -256,6 +258,20 @@ function radioLine(radio) {
   return radio.title ? `${radio.station} \u00b7 ${radio.title}` : radio.station;
 }
 
+/** Inside a watched zone, who has you: the bracket on the corner, or the pavement itself. */
+function watchLine(w) {
+  if (!w) return '';
+  if (w.camera) return w.people ? `on camera \u00b7 and ${w.people} more pair${w.people === 1 ? '' : 's'} of eyes` : 'on camera \u00b7 the tape is evidence';
+  return `${w.people} pair${w.people === 1 ? '' : 's'} of eyes on it`;
+}
+
+/** In custody: what the honest door costs, and how far the other one has got. */
+function jailLine(j) {
+  if (!j || !j.jailed) return '';
+  const pct = Math.round(j.escape * 100);
+  return `bail $${j.bail} \u00b7 E pays it \u00b7 hold Space for the wall${pct > 0 ? ` \u00b7 bars ${pct}%` : ''}${j.guardNear ? ' \u00b7 guard close' : ''}`;
+}
+
 function crewLine(net) {
   if (!net || !net.room) return '';
   if (!net.peers) return `Room ${net.room} · waiting`;
@@ -322,6 +338,8 @@ export function updateHudModel(model, input, units, now) {
   model.foot = footLine(input.foot);
   model.vitals = vitalsLine(input.foot);
   model.radio = radioLine(input.radio);
+  model.watch = watchLine(input.watch);
+  model.jail = jailLine(input.jail);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

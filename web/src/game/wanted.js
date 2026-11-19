@@ -40,6 +40,8 @@ export const OFFENCES = Object.freeze({
   'kerb riding': 1,
   'no lights at night': 1,
   'hit and run': 5,
+  // The wall is a charge of its own: a man who was in custody and is now on the street.
+  'jail break': 8,
 });
 
 /** Points that carry the level one star higher. The steps widen: the fifth star is hard to reach. */

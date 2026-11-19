@@ -41,6 +41,8 @@ import { createBoarding, awayFromCar, SEAMS } from './boarding.js';
 import { createBoats } from './boats.js';
 import { buildCitizens } from '../world/people/citizens.js';
 import { createRadio } from '../audio/radio.js';
+import { createWitness } from './witness.js';
+import { createJail } from './jail.js';
 import { createWeapon, WITNESS_RADIUS } from './weapons.js';
 import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
@@ -192,7 +194,7 @@ export function createGame(deps) {
     graph, plan, renderer, seed: ((seed | 0) ^ 0x506c) >>> 0, land: LAND_Y, quality: settings.graphics.preset,
     // A person driven at off the kerb is an offence, and the only witness is the crowd itself.
     onEndanger: (k) => {
-      if (wanted.add('peds scattered', k > 0.8 ? 1 : 0.5)) toast('A pedestrian was struck out of the way');
+      if (crime('peds scattered', k > 0.8 ? 1 : 0.5, ppos()[0], ppos()[2])) toast('A pedestrian was struck out of the way');
     },
   });
   // The people themselves are a download: five rigged bodies and one shared clip library, vendored into
@@ -315,14 +317,14 @@ export function createGame(deps) {
     // dispatch does about it is the dispatch's business, which is exactly why none of it is decided here.
     onShot: ({ origin, struck }) => {
       const seen = crowd.frighten(origin[0], origin[2], WITNESS_RADIUS, 1);
-      if (wanted.add('shots fired', struck.length ? 2.2 : 1.5)) {
+      if (crime('shots fired', struck.length ? 2.2 : 1.5, origin[0], origin[2])) {
         toast(seen > 2 ? `Shots fired \u00b7 ${seen} witnesses \u00b7 ${WantedLedger.label(wanted.stars)}` : 'Shots fired');
       }
     },
     onHit: (info) => {
       if (!info.person) return;
       crowd.strike(info.person, { seconds: 30 });
-      if (wanted.add('person shot')) toast('You struck somebody on the street');
+      if (crime('person shot', undefined, ppos()[0], ppos()[2])) toast('You struck somebody on the street');
     },
   });
   // The purse is the street's other score: what a race paid, what a till took, and what is left to spend.
@@ -455,7 +457,7 @@ export function createGame(deps) {
     camera.setMode('chase');
     camera.snap();
     gun.stow();
-    const seen = wanted.add(taken.hadDriver ? 'car jacked' : 'car stolen');
+    const seen = crime(taken.hadDriver ? 'car jacked' : 'car stolen', undefined, taken.x, taken.z);
     if (taken.hadDriver) crowd.frighten(taken.x, taken.z, 30, 1);
     toast(seen ? `${name} taken \u00b7 that was seen` : `${name} taken`);
   }
@@ -611,13 +613,11 @@ export function createGame(deps) {
       o.person.role(dist > 12 ? 'run' : 'walk');
       o.person.frame(dt, step);
       if (dist < 1.5 && onFoot && !inShop && !vitals.dead) {
-        purse.lose(250, 'fines');
-        wanted.clear();
+        // Handcuffs are not a fine any more: the cell opens, the bail is priced from the stars he
+        // arrived with, and the street stops chasing a man who is already standing in a yard.
+        jail.bust(wanted.stars);
         crowd.handPersonBack({ person: o.person });
         officers.splice(i, 1);
-        foot.place(drySpot[0], drySpot[1], drySpot[2], foot.yaw);
-        camera.snap();
-        toast('Arrested · $250 in fines and the record is wiped');
       }
     }
   }
@@ -716,6 +716,31 @@ export function createGame(deps) {
   // ------------------------------------------------------------------ helpers
 
   const toast = (text) => { if (text) ui.toast(text); };
+
+  // The eyes of the street: near a till or a painted bay a crime needs a witness - the lens on the
+  // bracket or the pair of eyes on the pavement. The open street stays open: what nobody owns,
+  // nobody reported.
+  const witness = createWitness({ shops: shops.list, lots: plan.lots || [], crowd, seed: 21 });
+  // And what happens when the eyes that caught you belong to the department: a cell in the yard, a
+  // bail figure priced from the stars, and two doors out of it (game/jail.js).
+  const jail = createJail({
+    purse, wanted, foot, camera, toast, plan,
+    audio: { door: (heavy) => { if (audio) audio.door(heavy); } },
+  });
+  /** Where a crime happened, whichever seat it was committed from. */
+  const ppos = () => (onFoot && foot ? foot.pos : player.pos);
+  /**
+   * A crime, judged by where it stood: inside a watched zone it needs eyes, and a lens adds weight
+   * to the charge, because tape outlives memory. Outside every zone the ledger works as it did.
+   */
+  const crime = (cause, amount, x, z) => {
+    const zone = witness.zoneAt(x, z);
+    if (!zone) return wanted.add(cause, amount);
+    const w = witness.seen(x, z);
+    if (!w.camera && w.people === 0) return false;
+    if (w.camera) toast('A camera has it on tape');
+    return wanted.add(cause, amount === undefined ? undefined : amount + 0.4);
+  };
 
   /**
    * Hands the current player's car to everything that holds a piece of it: the camera's
@@ -1122,7 +1147,7 @@ export function createGame(deps) {
     // Out of the car and back into it. Nothing about this is a menu: the door is the door, and the only
     // condition is that the car is nearly stopped, because a man stepping out of one at 40 m/s is a
     // casualty rather than a pedestrian.
-    if (input.consume('foot') && driving) {
+    if (input.consume('foot') && driving && !jail.jailed) {
       // Whichever car his hand is on: his own, or one the street is holding out to him. foot.js has
       // measured both by the same rule and said which was nearer, so this is a reading, not a guess.
       if (onFoot) {
@@ -1164,7 +1189,8 @@ export function createGame(deps) {
     }
     // A door: the shopfront's from the pavement, and the same key is the only way out of the room.
     if (input.consume('shop') && driving) {
-      if (inShop) shops.leave();
+      if (jail.jailed) jail.payBail();
+      else if (inShop) shops.leave();
       else if (!onFoot) toast('A shop is walked into, not driven into');
       else {
         const near = shops.nearest(foot.pos[0], foot.pos[2], 7);
@@ -1172,7 +1198,7 @@ export function createGame(deps) {
         else toast('No shopfront within reach');
       }
     }
-    if (input.consume('weapon') && driving) {
+    if (input.consume('weapon') && driving && !jail.jailed) {
       if (!onFoot) toast('Guns are for the pavement');
       else if (gun.id) { gun.stow(); toast('Stowed'); }
       else { gun.equip('pistol'); toast('The .38 is in your hand'); }
@@ -1691,6 +1717,8 @@ export function createGame(deps) {
         footIntent.crouch = controls.lookBack;
         footIntent.turn = simDt > 0 ? input.look.yaw / simDt : 0;
         footIntent.pitch = simDt > 0 ? input.look.pitch / simDt : 0;
+        // A man in a cell has no legs to speak of: the yard owns him until a door opens.
+        if (jail.jailed) { footIntent.forward = 0; footIntent.strafe = 0; footIntent.run = 0; footIntent.crouch = 0; }
         // A door in the hand holds the legs: the sequence owns the body until it is through it.
         if (boarding.active) {
           footIntent.forward = 0; footIntent.strafe = 0; footIntent.run = 0;
@@ -1951,6 +1979,9 @@ export function createGame(deps) {
         purseAge += simDt;
         hudStatus.purse = { cash: purse.cash, lastDelta: purseAge < 6 ? purseDelta : 0, lastAt: purseAge, best: purse.best };
         hudStatus.radio = radio.playing ? { station: radio.station.name, title: radio.title } : null;
+        hudStatus.jail = jail.snapshot();
+        const watch = witness.seen(player.pos[0], player.pos[2]);
+        hudStatus.watch = watch.zone ? { kind: watch.zone.kind, camera: watch.camera, people: watch.people } : null;
         hudStatus.foot = onFoot ? {
           onFoot: true, gun: gun.weapon ? gun.weapon.name : null, magazine: gun.inMagazine, reserve: gun.reserve,
           state: gun.state, stamina: foot.stamina, out: foot.out, boarding: !!foot.near || boarding.active,
@@ -1966,6 +1997,7 @@ export function createGame(deps) {
         if (!onFoot && !radio.playing) radio.start();
         if (onFoot && radio.playing) radio.stop();
         if (radio.playing) radio.tick(0.42);
+        if (jail.jailed) jail.step(simDt, input.state.handbrake > 0.5);
         stepOfficers(simDt);
         races.step(stepTime, playerPos2, phase.name === 'driving');
         hudStatus.race = races.snapshot();
