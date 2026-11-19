@@ -52,16 +52,21 @@ export const PAD_BUTTONS = Object.freeze({
   1: 'lookBack', // B
   2: 'boost', // X
   3: 'camera', // Y
-  4: 'boost', // left bumper
   8: 'recover', // Back / Select
   9: 'pause', // Start
   10: 'horn', // left stick click
+  11: 'weapon', // right stick click: the pistol out or stowed (game/weapons.js)
   12: 'time', // d-pad up
   13: 'weather', // d-pad down
   14: 'headlamps', // d-pad left
   5: 'foot', // right bumper: out of the car, back into it
-  15: 'shop', // right stick in: a door, in and out (game/shops.js)
-
+  15: 'shop', // d-pad right: a door, in and out (game/shops.js)
+  // The left bumper used to be a second nitrous, which is one button doing what another already does.
+  // The street races are on V and nothing else, so a controller could not take one at all: a pad has
+  // seventeen buttons and every one of them was spoken for, and this was the one worth spending. What is
+  // still keyboard-only is the radio dial, M, which is a small thing to lose against a race a pad player
+  // could never start.
+  4: 'race', // left bumper: take the street race on offer here (game/races.js)
 });
 const PAD_THROTTLE = 7; // right trigger
 const PAD_BRAKE = 6; // left trigger

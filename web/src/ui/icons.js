@@ -54,6 +54,10 @@ const PATHS = {
   lock: 'M6.8 10.6h10.4v9.6H6.8ZM9.4 10.6V8.2a2.6 2.6 0 0 1 5.2 0v2.4M12 14.2v2.6',
   voice: 'M3.6 5.4h16.8v10.2H12.6l-4.8 4.2v-4.2H3.6ZM7.4 9.2h9.2M7.4 12h6.4',
   drop: 'M12 3.6c3.2 4 5.4 6.9 5.4 9.7a5.4 5.4 0 0 1-10.8 0c0-2.8 2.2-5.7 5.4-9.7Z',
+  // An aeroplane from above, for the instruments row: fuselage, swept wing, tailplane.
+  plane: 'M12 2.6c.9 0 1.5 1.7 1.5 3.8v3.1l7.4 4.3v2.1L13.5 14v4.3l2.6 1.9v1.5L12 20.5l-4.1 1.2v-1.5l2.6-1.9V14L3.1 15.9v-2.1l7.4-4.3V6.4c0-2.1.6-3.8 1.5-3.8Z',
+  // A motorcycle from the side: two wheels, the frame between them, and a bar over the front.
+  bike: 'M5.4 13.4a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4ZM18.6 13.4a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4ZM5.4 17.1h5.2l3.4-4.5h3.1M10.6 17.1l2.7-6.6M14.1 6.2h2.7l1.5 3.4M8.3 10.5h3.4',
 };
 
 export const ICON_NAMES = Object.freeze(Object.keys(PATHS));
