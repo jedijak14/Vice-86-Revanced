@@ -77,11 +77,11 @@ export function buildCitizen(base, seed, opts = {}) {
   const style = police ? 'cap' : ['tee', 'jacket', 'tee', 'dress', 'tee', 'jacket'][Math.floor(r() * 6)];
   const hairStyle = police ? 'cap' : ['short', 'short', 'long', 'bun', 'cap', 'none'][Math.floor(r() * 6)];
 
-  const positions = [], normals = [], colors = [], joints = [], weights = [], tris = [];
+  const positions = [], normals = [], colors = [], joints = [], weights = [], tris = [], sways = [];
   const b = { positions, normals, colors, joints, weights, tris };
 
   /** A tapered prism from `a` to `b`, `sides` around, radii r0/r1, rigidly on one bone. */
-  function limb(a, ax, r0, r1, col, bone, sides = 8, capTop = true, capBot = true, squash = 1) {
+  function limb(a, ax, r0, r1, col, bone, sides = 8, capTop = true, capBot = true, squash = 1, swayV = 0) {
     const y = norm3([ax[0] - a[0], ax[1] - a[1], ax[2] - a[2]]);
     let up = Math.abs(y[1]) > 0.9 ? [0, 0, 1] : [0, 1, 0];
     const x = norm3(cross(up, y));
@@ -95,7 +95,7 @@ export function buildCitizen(base, seed, opts = {}) {
           c[1] + x[1] * ct + z[1] * st + (extra ? extra[1] : 0),
           c[2] + x[2] * ct + z[2] * st + (extra ? extra[2] : 0)];
         const n = norm3([x[0] * ct + z[0] * st, x[1] * ct + z[1] * st, x[2] * ct + z[2] * st]);
-        positions.push(...p); normals.push(...(n.length ? n : [0, 1, 0]));
+        positions.push(...p); normals.push(...(n.length ? n : [0, 1, 0])); sways.push(swayV);
         colors.push(col[0] * 255, col[1] * 255, col[2] * 255);
         joints.push(bone, 0, 0, 0); weights.push(255, 0, 0, 0);
       }
@@ -112,7 +112,7 @@ export function buildCitizen(base, seed, opts = {}) {
     if (capTop) for (let i = 1; i + 1 < sides; i++) tris.push(B, B + i, B + i + 1, B, B + i + 1, B + i);
   }
   /** An axis-aligned box by centre and half-extents, rigidly on one bone: 24 verts, honest normals. */
-  function box(c, hx, hy, hz, col, bone) {
+  function box(c, hx, hy, hz, col, bone, swayV = 0) {
     const first = positions.length / 3;
     const corners = [
       [-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1],
@@ -125,7 +125,7 @@ export function buildCitizen(base, seed, opts = {}) {
     for (const [a0, a1, a2, a3, n] of faces) {
       for (const vi of [a0, a1, a2, a0, a2, a3]) {
         const [sx, sy, sz] = corners[vi];
-        positions.push(c[0] + sx * hx, c[1] + sy * hy, c[2] + sz * hz);
+        positions.push(c[0] + sx * hx, c[1] + sy * hy, c[2] + sz * hz); sways.push(swayV);
         normals.push(n[0], n[1], n[2]);
         colors.push(col[0] * 255, col[1] * 255, col[2] * 255);
         joints.push(bone, 0, 0, 0); weights.push(255, 0, 0, 0);
@@ -149,13 +149,13 @@ export function buildCitizen(base, seed, opts = {}) {
   limb(mid(chest, head, 0.9), [head[0], crown - headR * 0.55, head[2]], headR, headR * 0.92, skin, bi('head'), 8, true, false, 1.08);
   // Hair and hats sit on the skull.
   if (hairStyle === 'short' || hairStyle === 'long' || hairStyle === 'bun') {
-    limb([head[0], crown - headR * 0.75, head[2]], [head[0], crown + headR * 0.28, head[2]], headR * 1.06, headR * 0.7, hair, bi('head'), 8, true, false, 1.1);
-    if (hairStyle === 'long') limb([head[0], crown - headR * 0.6, head[2] - headR * 0.7], [head[0], chest[1] + 0.06, head[2] - headR * 0.8], headR * 0.8, headR * 0.5, hair, bi('head'), 6, true, true, 0.5);
-    if (hairStyle === 'bun') box([head[0], crown + headR * 0.1, head[2] - headR * 0.95], headR * 0.35, headR * 0.35, headR * 0.35, hair, bi('head'));
+    limb([head[0], crown - headR * 0.75, head[2]], [head[0], crown + headR * 0.28, head[2]], headR * 1.06, headR * 0.7, hair, bi('head'), 8, true, false, 1.1, 1);
+    if (hairStyle === 'long') limb([head[0], crown - headR * 0.6, head[2] - headR * 0.7], [head[0], chest[1] + 0.06, head[2] - headR * 0.8], headR * 0.8, headR * 0.5, hair, bi('head'), 6, true, true, 0.5, 1);
+    if (hairStyle === 'bun') box([head[0], crown + headR * 0.1, head[2] - headR * 0.95], headR * 0.35, headR * 0.35, headR * 0.35, hair, bi('head'), 0.8);
   }
   if (hairStyle === 'cap' || police) {
     const capCol = police ? POLICE.cap : pick(r, CLOTH);
-    limb([head[0], crown - headR * 0.5, head[2]], [head[0], crown + headR * (police ? 0.5 : 0.3), head[2]], headR * 1.08, headR * (police ? 0.82 : 0.6), capCol, bi('head'), 8, true, false, 1.1);
+    limb([head[0], crown - headR * 0.5, head[2]], [head[0], crown + headR * (police ? 0.5 : 0.3), head[2]], headR * 1.08, headR * (police ? 0.82 : 0.6), capCol, bi('head'), 8, true, false, 1.1, 0.25);
     box([head[0], crown - headR * 0.42, head[2] + headR * 1.15], headR * 0.85, headR * 0.1, headR * 0.55, police ? POLICE.cap : capCol, bi('head'));
   }
   // Arms: sleeve over the upper arm (short for a tee, long for a jacket), forearm, hand.
@@ -163,7 +163,7 @@ export function buildCitizen(base, seed, opts = {}) {
     const ua = J(`upperarm.${tag}`), la = J(`lowerarm.${tag}`), wr = J(`wrist.${tag}`), ha = J(`hand.${tag}`);
     const sleeve = style === 'jacket' || police ? wr : mid(ua, la, 0.55);
     const sleeveCol = style === 'tee' && !police ? top : top;
-    limb(ua, sleeve, shoulder * 0.42 * build, shoulder * 0.34, sleeveCol, bi(`upperarm.${tag}`), 8, true, style !== 'tee' || police);
+    limb(ua, sleeve, shoulder * 0.42 * build, shoulder * 0.34, sleeveCol, bi(`upperarm.${tag}`), 8, true, style !== 'tee' || police, 1, style === 'jacket' || police ? 0.5 : 0);
     if (style === 'tee' && !police) limb(mid(ua, la, 0.55), la, shoulder * 0.33, shoulder * 0.30, skin, bi(`upperarm.${tag}`), 8, false, false);
     limb(la, wr, shoulder * 0.30, shoulder * 0.24, style === 'jacket' || police ? top : skin, bi(`lowerarm.${tag}`), 8, false, false);
     limb(wr, ha, shoulder * 0.24, shoulder * 0.2, skin, bi(`wrist.${tag}`), 6, false, false);
@@ -176,7 +176,7 @@ export function buildCitizen(base, seed, opts = {}) {
     limb([ft[0], ft[1] - 0.10, ft[2] - 0.01], [to[0], ft[1] - 0.11, to[2] + 0.04], 0.06, 0.055, shoe, bi(`foot.${tag}`), 6, true, true, 0.5);
   }
   if (style === 'dress') {
-    limb(mid(hips, spine, 0.4), mid(hips, spine, 0.4).map((v, i) => i === 1 ? v - 0.34 : v), 0.14 * build, 0.2, top, bi('hips'), 8, false, true, 0.85);
+    limb(mid(hips, spine, 0.4), mid(hips, spine, 0.4).map((v, i) => i === 1 ? v - 0.34 : v), 0.14 * build, 0.2, top, bi('hips'), 8, false, true, 0.85, 0.55);
   }
   if (police) {
     // Belt, badge, and the radio on the shoulder strap: the uniform's punctuation.
@@ -197,7 +197,7 @@ export function buildCitizen(base, seed, opts = {}) {
     gltf: base.gltf, rig: base.rig, texture: null,
     positions: new Float32Array(positions), normals: new Float32Array(normals),
     colors, joints: new Uint8Array(joints), weights: new Uint8Array(weights),
-    triangles: Int32Array.from(tris), vertexCount: positions.length / 3,
+    triangles: Int32Array.from(tris), vertexCount: positions.length / 3, sway: Float32Array.from(sways),
     bounds, authored: base.authored, bodyHeight: base.authored, heightScale: 1,
     police, citizen: true, style,
   };

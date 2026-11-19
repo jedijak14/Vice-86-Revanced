@@ -64,3 +64,14 @@ test('the uniform reads as a uniform: navy top, navy trousers, a cap and a badge
   const civ = buildCitizen(base, 12);
   assert.ok(!civ.police, 'the same seed without the flag is a civilian');
 });
+
+test('the sway mask: hair a full one, cloth a half, and every vertex accounted for', () => {
+  const shelf = buildCitizens(base, { citizens: 6, officers: 1, seed: 4 });
+  for (const rec of shelf) {
+    assert.equal(rec.sway.length, rec.vertexCount, 'one mask value per vertex');
+    for (const m of rec.sway) assert.ok(m >= 0 && m <= 1, 'a mask is a share, not a distance');
+  }
+  const hairy = shelf.find((r) => r.sway.some((m) => m === 1));
+  assert.ok(hairy, 'somebody on the shelf has hair that moves');
+  assert.ok(shelf.every((r) => r.sway.some((m) => m > 0)), 'and nobody is welded solid');
+});

@@ -297,6 +297,15 @@ export function retargetClips(cast, character) {
 }
 
 /**
+ * The wind the hair and cloth answer to. Ultra sets the amplitudes; every lower rung leaves them
+ * at zero and the loop below costs one comparison per person per frame. Written once a frame by
+ * the game, read by every skin write: hair is a mask of 1 in the mesh, cloth 0.55, and the roots
+ * of either hold while the ends move, because that is what hair and cloth do.
+ */
+const SWAY_ENV = { hair: 0, cloth: 0, time: 0, wx: 0, wz: 0 };
+export function setSway(next = {}) { Object.assign(SWAY_ENV, next); return SWAY_ENV; }
+
+/**
  * A person: the mesh, the rig, the clock. `renderer.refreshMesh` is what pushes one frame of skinning
  * into the buffer the renderer already owns.
  */
@@ -315,7 +324,7 @@ export function newPerson(renderer, cast, character, { height = 1.78, wardrobe =
     frame(dt = 0, metres = 0) {
       player.update(dt, metres);
       player.solve(heightScale);
-      writeVertices(build, character, heightScale);
+      writeVertices(build, character, heightScale, this.yaw);
       renderer.refreshMesh(handle);
     },
     place(x, y, z, yaw = 0) {
@@ -373,12 +382,36 @@ function buildMeshData(character, wardrobe) {
  * normalized, both inside one 36-byte vertex, so the whole mesh is written in two passes over typed
  * array views of the same ArrayBuffer.
  */
-function writeVertices(build, character, scale) {
+function writeVertices(build, character, scale, yaw = 0) {
   const buf = build.data.vertices;
   const f32 = new Float32Array(buf);
   const i16 = new Int16Array(buf);
   const out = build.skinned, outN = build.skinnedNormal;
   skinInto(character, build, scale, out, outN);
+  // Secondary motion: the skinned pose is the skeleton's opinion, and this is the wind's. Only
+  // meshes that carry a sway mask pay for it, and only while a preset has hair or cloth switched on.
+  const sway = character.sway;
+  if (sway && (SWAY_ENV.hair > 0 || SWAY_ENV.cloth > 0)) {
+    const c = Math.cos(yaw), s2 = Math.sin(yaw);
+    const lx = c * SWAY_ENV.wx + s2 * SWAY_ENV.wz;      // the world wind, in the body's own frame
+    const lz = -s2 * SWAY_ENV.wx + c * SWAY_ENV.wz;
+    const t = SWAY_ENV.time;
+    for (let v = 0; v < character.vertexCount; v++) {
+      const m = sway[v];
+      if (m <= 0) continue;
+      const isHair = m > 0.75;
+      const amp = isHair ? SWAY_ENV.hair : SWAY_ENV.cloth;
+      if (amp <= 0) continue;
+      const y = out[v * 3 + 1];
+      const lift = y < 0 ? 0 : y > 1.5 ? 1 : y / 1.5;   // roots hold, ends move
+      const ph = t * (isHair ? 2.6 : 1.7) + y * 2.4 + (v % 97) * 0.11;
+      const g = Math.sin(ph) * 0.7 + Math.sin(ph * 2.33 + 1.7) * 0.3;
+      const flutter = Math.sin(ph * 3.1 + 0.6) * 0.35;
+      out[v * 3] += (lx * 0.8 + flutter * 0.3) * g * amp * lift;
+      out[v * 3 + 1] += (isHair ? -0.25 : 0.1) * Math.abs(g) * amp * lift;
+      out[v * 3 + 2] += (lz * 0.8 + flutter * 0.2) * g * amp * lift;
+    }
+  }
   const strideF = VERTEX_STRIDE / 4, strideS = VERTEX_STRIDE / 2;
   for (let v = 0; v < character.vertexCount; v++) {
     const o = v * strideF;

@@ -41,6 +41,9 @@ import { createBoarding, awayFromCar, SEAMS } from './boarding.js';
 import { createBoats } from './boats.js';
 import { buildCitizens } from '../world/people/citizens.js';
 import { createRadio } from '../audio/radio.js';
+import { setSway } from '../world/people/cast.js';
+import { createWaterField } from '../physics/waterfield.js';
+import { createWaveSet, updateWaveSet, surfaceHeight } from '../render/sky/waves.js';
 import { createWitness } from './witness.js';
 import { createJail } from './jail.js';
 import { createWeapon, WITNESS_RADIUS } from './weapons.js';
@@ -733,6 +736,13 @@ export function createGame(deps) {
    * A crime, judged by where it stood: inside a watched zone it needs eyes, and a lens adds weight
    * to the charge, because tape outlives memory. Outside every zone the ledger works as it did.
    */
+  // Ultra's water: the sea's own trains evaluated in JavaScript, plus a wake field that remembers
+  // every hull and swimmer. Below Ultra the boats float on the flat plane they always did.
+  const seaWaves = createWaveSet(10, 0x5ea1);
+  const wake = createWaterField({});
+  const waterPhysicsOn = () => !!(settings.graphics && settings.graphics.waterPhysics);
+  const waterBoost = (x, z) => (waterPhysicsOn() ? surfaceHeight(seaWaves, x, z) + wake.height(x, z) : 0);
+
   const crime = (cause, amount, x, z) => {
     const zone = witness.zoneAt(x, z);
     if (!zone) return wanted.add(cause, amount);
@@ -1744,7 +1754,7 @@ export function createGame(deps) {
         // the car — close enough to touch, still enough to board.
         if (!boats && world.plan) {
           boats = createBoats({
-            renderer, plan: world.plan, water: () => SEA_Y,
+            renderer, plan: world.plan, water: (x, z) => SEA_Y + waterBoost(x, z),
             field: typeof world.field === 'function' ? (x, z) => world.field(x, z) : null,
           });
         }
@@ -1997,6 +2007,26 @@ export function createGame(deps) {
         if (!onFoot && !radio.playing) radio.start();
         if (onFoot && radio.playing) radio.stop();
         if (radio.playing) radio.tick(0.42);
+        // Hair and cloth, when the preset carries them: the wind, the hour, and who is wearing it.
+        setSway({
+          hair: settings.graphics.hair ? 0.04 : 0, cloth: settings.graphics.cloth ? 0.022 : 0,
+          time: performance.now() / 1000, wx: weather.windX || 0, wz: weather.windZ || 0,
+        });
+        if (waterPhysicsOn() && simDt > 0) {
+          const wx = weather.windX || 0, wz = weather.windZ || 1;
+          updateWaveSet(seaWaves, wx, wz, Math.hypot(wx, wz) + 3, weather.storm || 0, simDt, player.pos[0], player.pos[2]);
+          wake.step(simDt, player.pos[0], player.pos[2]);
+          if (boats) {
+            for (const entry of boats.boats) {
+              const bt = entry.boat;
+              if (bt && bt.immersion > 0.01) {
+                const p = bt.renderPos || bt.pos;
+                wake.splash(p[0], p[2], 1.6 + (bt.beam || 2.2) * 0.5, -bt.immersion * 26 * simDt);
+              }
+            }
+          }
+          if (onFoot && foot.swimming) wake.splash(foot.pos[0], foot.pos[2], 0.9, -14 * simDt);
+        }
         if (jail.jailed) jail.step(simDt, input.state.handbrake > 0.5);
         stepOfficers(simDt);
         races.step(stepTime, playerPos2, phase.name === 'driving');

@@ -96,7 +96,7 @@ export function resolveQuality(graphics = {}) {
   const reflections = clampInt(pick('reflections'), 0, REFLECTIONS.length - 1, base.reflections), bloom = clampInt(pick('bloom'), 0, BLOOM.length - 1, base.bloom);
   const motionBlur = clampInt(pick('motionBlur'), 0, 3, base.motionBlur), lights = clampInt(pick('lights'), 0, LIGHTS.length - 1, base.lights);
   const depthOfField = clampInt(pick('depthOfField'), 0, 3, base.depthOfField);
-  const particles = clampInt(pick('particles'), 0, PARTICLES.length - 1, base.particles), drawDistance = clampInt(pick('drawDistance'), 0, 3, base.drawDistance);
+  const particles = clampInt(pick('particles'), 0, PARTICLES.length - 1, base.particles), drawDistance = clampInt(pick('drawDistance'), 0, 4, base.drawDistance);
   const aa = pick('antialiasing'), antialiasing = aa === 'off' || aa === 'fxaa' || aa === 'taa' ? aa : base.antialiasing;
   // The detail hint follows the heaviest visual settings rather than the preset label, so 'custom' works.
   const detail = graphics.preset in DETAIL ? DETAIL[graphics.preset] : [0.25, 0.5, 0.8, 1][Math.round((shadows + reflections + lights) / 3)];
@@ -131,7 +131,7 @@ export function resolveQuality(graphics = {}) {
     lowMemory: mem !== null,
     resolutionScale: mem ? Math.min(scale, mem.scale) : scale,
     dynamicResolution: graphics.dynamicResolution !== false,
-    maxPixelRatio: clampNum(pick('maxPixelRatio'), 1, 2, base.maxPixelRatio),
+    maxPixelRatio: clampNum(pick('maxPixelRatio'), 1, 3, base.maxPixelRatio),
     frameTarget: graphics.frameCap === 30 ? 1000 / 30 : 1000 / 60,          // ms, target of dynamic resolution
     levels: { shadows, ao, reflections, bloom, motionBlur, depthOfField, lights, particles, drawDistance },
     shadows: shadow,
@@ -145,6 +145,12 @@ export function resolveQuality(graphics = {}) {
     filmGrain: pick('filmGrain') !== false && pick('filmGrain') !== 0,
     chromaticAberration: pick('chromaticAberration') === true || pick('chromaticAberration') === 1,
     // Tunables requested by the lead: multiply the built-in bloom amount, shift exposure in stops.
+    // Ultra's own switches: the hair and cloth sway, the wake field, and the grade that puts the
+    // frame in the light of the reference screenshots. Every lower rung leaves them at zero.
+    hair: pick('hair') === true || pick('hair') === 1,
+    cloth: pick('cloth') === true || pick('cloth') === 1,
+    waterPhysics: pick('waterPhysics') === true || pick('waterPhysics') === 1,
+    grade: pick('grade') === 'gtav' ? 'gtav' : '',
     bloomStrength: clampNum(graphics.bloomStrength, 0, 2, 1),
     exposureBias: clampNum(graphics.exposureBias, -2, 2, 0),
     detail,
