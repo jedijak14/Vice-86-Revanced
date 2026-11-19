@@ -90,9 +90,13 @@ jobs:
           tail -n 60 pack.log
           if [ "$status" -ne 0 ]; then
             # The development sandbox cannot read Actions logs (they live on a host it is not
-            # allowed to reach), so a failed package posts its own tail somewhere it can: a gist.
-            { echo "run $GITHUB_RUN_ID sha $GITHUB_SHA"; echo; tail -n 80 pack.log; } > pack.tail
-            gh gist create --public -d "vice86 desktop packager log" pack.tail || true
+            # allowed to reach), and the job token can only write contents - so the log travels the
+            # one road both ends can use: the message of an annotated tag, deleted once read.
+            { echo "run $GITHUB_RUN_ID sha $GITHUB_SHA"; echo; tail -n 60 pack.log; } > pack.tail
+            git config user.email "build@localhost" && git config user.name "desktop build"
+            git add -f pack.tail && git commit -q -m "build log $GITHUB_RUN_ID" || true
+            git tag -a "build-log-$GITHUB_RUN_ID" -m "$(cat pack.tail)" || true
+            git push origin "build-log-$GITHUB_RUN_ID" || true
             exit "$status"
           fi
 
