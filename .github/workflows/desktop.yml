@@ -81,13 +81,15 @@ jobs:
                  --out dist --overwrite )
           # The icon is ours and valid, but if a future packager disagrees about it, the release
           # should still ship: fall back to Electron's own icon rather than fail the run.
+          # GitHub runs this shell with errexit, so the packager's failure has to be caught by an
+          # assignment, not left as the status of a compound command.
+          status=0
           if [ -f desktop/build/icon.ico ]; then
-            { "$BIN" "${ARGS[@]}" --icon=desktop/build/icon.ico || "$BIN" "${ARGS[@]}"; } > pack.log 2>&1
+            { "$BIN" "${ARGS[@]}" --icon=desktop/build/icon.ico || "$BIN" "${ARGS[@]}"; } > pack.log 2>&1 || status=$?
           else
-            "$BIN" "${ARGS[@]}" > pack.log 2>&1
+            "$BIN" "${ARGS[@]}" > pack.log 2>&1 || status=$?
           fi
-          status=$?
-          tail -n 60 pack.log
+          tail -n 60 pack.log || true
           if [ "$status" -ne 0 ]; then
             # The development sandbox cannot read Actions logs (they live on a host it is not
             # allowed to reach), and the job token can only write contents - so the log travels the
