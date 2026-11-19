@@ -130,6 +130,21 @@ function buildClock(doc) {
 }
 
 /**
+ * The two bars at the top left, copied from the reference screenshots: how much of him is left,
+ * and how much air. A bar is read in the corner of an eye; a number is read instead of the road.
+ * The air row stays dark until there is less than all of it, because a full lung is not news.
+ */
+function buildVitals(doc) {
+  const bar = (name, iconName) => {
+    const fill = el(doc, 'span', `hud__vital-fill hud__vital-fill--${name}`);
+    const track = el(doc, 'span', 'hud__vital-track', fill);
+    const root = el(doc, 'div', `hud__vital hud__vital--${name}`, icon(doc, iconName, 'hud__vital-icon'), track);
+    return { root, fill };
+  };
+  return { root: null, health: bar('health', 'pulse'), air: bar('air', 'drop') };
+}
+
+/**
  * options: { doc, parent, settings, win?, now? }
  * Returns { el, update(input), show(), hide(), visible, setMinimapPainter(fn) }.
  */
@@ -139,11 +154,15 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
   const clock = buildClock(doc);
   const police = buildPolice(doc);
   const rows = buildRows(doc);
+  const vitals = buildVitals(doc);
   const banner = el(doc, 'div', 'hud__banner');
   const place = el(doc, 'div', 'hud__place');
-  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root, rows.purse.root, rows.foot.root, rows.vitals.root, rows.radio.root, rows.watch.root, rows.jail.root);
-
-  const root = el(doc, 'div', 'hud', el(doc, 'div', 'hud__top', clock.root, police.root, rows.root, banner), map.root, place, gauge.root);
+  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root, rows.foot.root, rows.vitals.root, rows.radio.root, rows.watch.root, rows.jail.root);
+  vitals.root = el(doc, 'div', 'hud__vitals', vitals.health.root, vitals.air.root);
+  // The reference layout: the money, the stars and the hour share the top right; the bars own the
+  // top left; everything the street has to say stacks above the map, where the objectives sit.
+  const topright = el(doc, 'div', 'hud__topright', clock.root, police.root, rows.purse.root);
+  const root = el(doc, 'div', 'hud', topright, vitals.root, rows.root, banner, map.root, place, gauge.root);
   root.setAttribute('aria-hidden', 'true');   // a visual instrument cluster; nothing here is read out
   parent.appendChild(root);
 
@@ -173,6 +192,10 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
     boosting: classWriter(gauge.root, 'is-boosting'),
     nitrousEmpty: classWriter(gauge.root, 'is-nitrous-empty'),
     steady: classWriter(root, 'is-steady'),
+    vOn: classWriter(vitals.root, 'is-on'),
+    vHealth: styleWriter(vitals.health.fill, 'width'),
+    vAir: styleWriter(vitals.air.fill, 'width'),
+    vAirOn: classWriter(vitals.air.root, 'is-on'),
   };
   // Values compared as numbers before any string is built for them.
   let shownMinute = -1;
@@ -299,6 +322,10 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
         write.row[i](lines[i]);
         write.rowOn[i](Boolean(lines[i]));
       }
+      write.vOn(Boolean(input.foot));
+      write.vHealth(`${Math.round(model.health * 100)}%`);
+      write.vAir(`${Math.round(model.oxygen * 100)}%`);
+      write.vAirOn(model.airOn);
       write.lamps(model.headlamps);
       write.brake(model.handbrake);
       write.nitrous(NITROUS_OFFSETS[model.nitrous]);

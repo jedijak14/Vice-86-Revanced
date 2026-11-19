@@ -164,6 +164,9 @@ export function createHudModel() {
     foot: '',            // on foot: the gun in hand, the wind, what is nearest
     vitals: '',          // on foot: how much of him is left, when any of it is missing
     radio: '',           // the station on the dial and what it is playing
+    health: 1,           // 0..1: the walker's wound state, as a bar rather than a number
+    oxygen: 1,           // 0..1: the air left in him
+    airOn: false,        // whether the air bar is news enough to show
     watch: '',           // inside a watched zone: the lens, or the eyes, that have you
     jail: '',            // in custody: the bail, the wall, the guard
   };
@@ -338,6 +341,10 @@ export function updateHudModel(model, input, units, now) {
   model.foot = footLine(input.foot);
   model.vitals = vitalsLine(input.foot);
   model.radio = radioLine(input.radio);
+  const walker = input.foot || null;
+  model.health = walker && walker.health !== undefined ? walker.health : 1;
+  model.oxygen = walker && walker.oxygen !== undefined ? walker.oxygen : 1;
+  model.airOn = !!walker && (walker.oxygen !== undefined && walker.oxygen < 0.995 || !!walker.swimming || !!walker.submerged);
   model.watch = watchLine(input.watch);
   model.jail = jailLine(input.jail);
 
