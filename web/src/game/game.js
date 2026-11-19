@@ -36,6 +36,9 @@ import { createCamera } from './camera.js';
 import { createTraffic } from './traffic.js';
 import { createCrowd, PEOPLE_BY_TIER } from './crowd.js';
 import { createFoot, BOARD_DISTANCE, BOARD_SPEED_LIMIT } from './foot.js';
+import { createVitals } from './vitals.js';
+import { createBoarding, awayFromCar } from './boarding.js';
+import { createBoats } from './boats.js';
 import { createWeapon, WITNESS_RADIUS } from './weapons.js';
 import { createPurse, formatCash } from './money.js';
 import { WantedLedger } from './wanted.js';
@@ -56,6 +59,8 @@ import { createGarageRig } from './garageRig.js';
 
 /** Height of the land (design/ARCHITECTURE.md, coordinate conventions). */
 const LAND_Y = 1.2;
+/** Metres: the surface of the sea the coast map meshes its bed against. Above it, air; below, breath. */
+const SEA_Y = 0;
 const DEFAULT_SEED = 1986;
 
 const FADE_OUT_SECONDS = 0.3, FADE_IN_SECONDS = 0.6;
@@ -248,11 +253,37 @@ export function createGame(deps) {
   // The street is built around a car, so a man on the pavement is a guest in it. game/foot.js owns his
   // body and game/weapons.js his gun; what is kept here is the handover — whose input he answers to, where
   // the camera goes when he leaves the car, and what the police hear when the gun speaks.
+  /** The last place he was dry: where a drowning or a death puts him back, one step of shore at a time. */
+  // The body's two tanks (game/vitals.js): health, and the breath that runs out under the surface and
+  // comes back in a few gasps at it. Drowning is a wound like any other once the lung is empty.
+  const vitals = createVitals({
+    onHurt: () => camera.addTrauma(0.18),
+    onDeath: (cause) => {
+      boarding.cancel();
+      if (foot.person) foot.person.visible(true);
+      foot.place(drySpot[0], drySpot[1], drySpot[2], foot.yaw);
+      vitals.revive(0.5);
+      camera.addTrauma(0.5);
+      toast(cause === 'drown' ? 'The water took you · the shore gave you back'
+        : cause === 'fall' ? 'The fall took you · you came to on dry ground' : 'You were killed · you came to');
+    },
+  });
+  // The second-and-a-half at a door (game/boarding.js): an empty car is a handle and a hinge, an
+  // occupied one is a man coming out of his seat before the wheel is yours.
+  const boarding = createBoarding({ crowd });
+  let boardTag = 'own';
+  let boardBoat = -1;
+  // The marina's fleet: hulls tied up wherever the city put water and a door to it (game/boats.js).
+  let boats = null;
+  let boatDriven = -1;
+  let boatNear = null;
   const foot = createFoot({
     physics, land: LAND_Y, crowd,
-    onLand: (y, hard) => {
+    water: (x, z) => (typeof world.field === 'function' && world.field(x, z).kind === 'water' ? SEA_Y : null),
+    onLand: (y, hard, impact) => {
       if (!hard) return;
       camera.addTrauma(0.22);
+      vitals.fall(impact);
       toast('You landed hard');
     },
   });
@@ -427,6 +458,33 @@ export function createGame(deps) {
     toast('In');
   }
 
+  /** Untie: the wheel becomes a tiller and the chase camera learns what a wake looks like. */
+  function enterBoat() {
+    const entry = boats && boats.get(boardBoat);
+    if (!entry) { toast('She slipped her mooring'); return; }
+    boatDriven = entry.id;
+    onFoot = false;
+    foot.letGo();
+    gun.stow();
+    input.looking = false;
+    input.lookMode = 'orbit';
+    if (audio) audio.door(true);
+    toast(`${entry.name} · untied`);
+  }
+
+  /** Over the side: into the water if that is what is there — the swim is the gangplank now. */
+  function leaveBoat() {
+    const entry = boats.get(boatDriven);
+    const b = entry.boat;
+    const right = [Math.cos(b.yaw), 0, -Math.sin(b.yaw)];
+    onFoot = true;
+    boatDriven = -1;
+    foot.place(b.pos[0] + right[0] * 1.9, SEA_Y - 0.2, b.pos[2] + right[2] * 1.9, b.yaw);
+    camera.setMode('chase');
+    camera.snap();
+    toast('Over the side');
+  }
+
   // ---- shops ----------------------------------------------------------------------------------------------
   // A door on the pavement is a place, not a menu. game/shops.js decides what the door means at this hour and
   // what a till gives up; game/shoproom.js puts a room with its own lamps behind it while a man is standing in
@@ -498,7 +556,7 @@ export function createGame(deps) {
     footLook.x = footEye[0]; footLook.y = footEye[1]; footLook.z = footEye[2];
     footLook.yaw = foot.look.yaw; footLook.pitch = foot.look.pitch;
     const fired = gun.fire(footLook, dt, Math.min(1, foot.moving / 4.4));
-    if (fired && foot.person) foot.person.role('shoot', { once: true, upper: true });
+    if (fired && foot.person) foot.person.role(gun.weapon.hands === 2 ? 'shoot2' : 'shoot', { once: true, upper: true });
     return !!fired;
   }
 
@@ -1005,7 +1063,32 @@ export function createGame(deps) {
     if (input.consume('foot') && driving) {
       // Whichever car his hand is on: his own, or one the street is holding out to him. foot.js has
       // measured both by the same rule and said which was nearer, so this is a reading, not a guess.
-      if (onFoot) { if (foot.near && foot.near.tag === 'traffic') takeCar(); else climbIn(); }
+      if (onFoot) {
+        // The door takes a second (game/boarding.js). Which car his hand is on says which sequence:
+        // the street's offer carries whether a driver is sitting in it, and his own car is empty by
+        // definition -- he just left it.
+        if (!boarding.active && foot.near) {
+          if (foot.swimming) toast('Not from the water');
+          else {
+            boardTag = foot.near.tag === 'traffic' && streetCar && streetCar.active ? 'traffic' : 'own';
+            const c = boardTag === 'traffic' ? streetCar : null;
+            const cx = c ? c.x : player.pos[0], cz = c ? c.z : player.pos[2], cyaw = c ? c.yaw : player.vehicle.yaw;
+            const side = foot.near.side;
+            boarding.begin(boardTag === 'traffic' && !!c.hadDriver, { x: foot.pos[0], y: foot.pos[1], z: foot.pos[2] },
+              awayFromCar(cx, cz, cyaw, side));
+          }
+        } else if (!boarding.active && boatNear && boatDriven < 0) {
+          boardTag = 'boat';
+          boardBoat = boatNear.id;
+          boarding.begin(false, { x: foot.pos[0], y: foot.pos[1], z: foot.pos[2] },
+            awayFromCar(boatNear.x, boatNear.z, boatNear.yaw, 1));
+        }
+      }
+      else if (boatDriven >= 0) {
+        const b = boats.get(boatDriven).boat;
+        if (b.speed < 2.5) leaveBoat();
+        else toast('Slow her down first');
+      }
       else if (Math.abs(player.forwardSpeed || 0) < 2.2) stepOut();
       else toast('Stop the car first');
     }
@@ -1032,7 +1115,7 @@ export function createGame(deps) {
     if (input.consume('recover') && phase.name === 'driving') {
       // The same key means two things, because a man on the pavement has nothing to recover: the car is
       // where he left it. R is the natural key for a magazine, and the street has no other use for it.
-      if (onFoot) { if (gun.startReload() && foot.person) foot.person.role('reload', { once: true, upper: true }); }
+      if (onFoot) { if (gun.startReload() && foot.person) foot.person.role(gun.weapon.hands === 2 ? 'reload2' : 'reload', { once: true, upper: true }); }
       else { recoverToRoad(); toast('Back on the road'); }
     }
     if (input.consume('time') && driving) {
@@ -1538,14 +1621,58 @@ export function createGame(deps) {
         footIntent.crouch = controls.lookBack;
         footIntent.turn = simDt > 0 ? input.look.yaw / simDt : 0;
         footIntent.pitch = simDt > 0 ? input.look.pitch / simDt : 0;
+        // A door in the hand holds the legs: the sequence owns the body until it is through it.
+        if (boarding.active) {
+          footIntent.forward = 0; footIntent.strafe = 0; footIntent.run = 0;
+          footIntent.turn = 0; footIntent.pitch = 0;
+        }
         // A car that is not his, if the street is holding one within reach. A man in a shop is not on
         // the street and has nothing to take; anywhere else the nearest car that is nearly stopped is
         // offered, and foot.js picks between it and his own by distance alone.
         streetCar = !inShop ? traffic.nearestTo(foot.pos[0], foot.pos[2], BOARD_DISTANCE, BOARD_SPEED_LIMIT) : null;
+        boatNear = null;
+        // A car that drove off mid-door takes the sequence with it, and the body back with it.
+        if (boarding.active && boardTag === 'traffic' && (!streetCar || !streetCar.active)) {
+          boarding.cancel();
+          if (foot.person) foot.person.visible(true);
+          foot.play(null);
+          toast('It drove off');
+        }
         foot.step(simDt, footIntent, player.vehicle ? {
           x: player.pos[0], y: player.pos[1], z: player.pos[2],
           yaw: player.vehicle.yaw, speed: player.vehicle.speed,
         } : null, streetCar && streetCar.active ? streetCar : null);
+        // A gunwale within reach, when no car door is: the boat is offered on the same principle as
+        // the car — close enough to touch, still enough to board.
+        if (!boats && world.plan) {
+          boats = createBoats({
+            renderer, plan: world.plan, water: () => SEA_Y,
+            field: typeof world.field === 'function' ? (x, z) => world.field(x, z) : null,
+          });
+        }
+        if (boats && !foot.near && !inShop) boatNear = boats.nearestTo(foot.pos[0], foot.pos[2], 3.4);
+        // The lung, and the slow clock: breath empties under the surface and the wound closes only
+        // while the street leaves him alone (game/vitals.js).
+        vitals.breath(simDt, foot.submerged);
+        vitals.tick(simDt, wanted.stars > 0);
+        // The door sequence: events at the seams, and the car at the end of them.
+        for (const ev of boarding.step(simDt)) {
+          if (ev === 'reach') foot.play('interact');
+          else if (ev === 'pull' && audio) audio.door(true);
+          else if (ev === 'hide') {
+            if (foot.person) foot.person.visible(false);
+            if (audio) audio.door(true);
+          } else if (ev === 'done') {
+            if (boardTag === 'traffic') takeCar();
+            else if (boardTag === 'boat') enterBoat();
+            else climbIn();
+          }
+        }
+        // The stance: a drawn gun is held, not carried, and the hold rides over the legs (upper body
+        // only) so a man can walk his shot up the street. Two-handed guns get their own clips.
+        if (gun.armed && foot.person && !foot.swimming && !boarding.active) {
+          foot.person.role(gun.weapon.hands === 2 ? 'aim2' : 'aim', { upper: true });
+        }
         // The trigger is held, not tapped: the gun's own cooldown is what sets the rate, so a held Space
         // empties a machine pistol and taps a pistol one at a time with the same code.
         if (controls.handbrake > 0.5) pullTrigger(simDt); else gun.advance(simDt);
@@ -1557,16 +1684,16 @@ export function createGame(deps) {
           if (said) toast(said);
           const offer = shops.offer(shops.inside, shopsAt());
           shopSaid = offer ? `${offer.label} \u00b7 E` : '';
-        } else if (typeof world.field === 'function' && foot.pos[1] < LAND_Y - DEEP_WATER
-            && world.field(foot.pos[0], foot.pos[2]).kind === 'water') {
-          // No swimming this week, and no drowning either: the shore puts him back where it found him dry.
-          foot.place(drySpot[0], drySpot[1], drySpot[2], foot.yaw);
-          toast('Too deep. You came back out');
-        } else if (foot.grounded && foot.pos[1] > LAND_Y - 0.4) {
+        } else if (foot.grounded && foot.pos[1] > LAND_Y - 0.4 && !foot.swimming) {
           drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
         }
       } else {
         player.drive(controls, boost);
+      }
+      if (boats) {
+        boats.step(simDt, boatDriven, boatDriven >= 0 ? {
+          throttle: controls.throttle - controls.brake, steer: -controls.steer, brake: 0,
+        } : null);
       }
 
       // Simulation.
@@ -1636,6 +1763,17 @@ export function createGame(deps) {
       }
       refreshSubject();
       camera.update(simDt, onFoot ? footSubject : subject);
+      if (boatDriven >= 0 && boats) {
+        // Astern and above the wake: the chase arm's car assumptions are no good to a hull, so the
+        // boat gets the free camera held by hand, one springless frame at a time.
+        const b = boats.get(boatDriven).boat;
+        const back = 7.5 + Math.min(4, b.speed * 0.22);
+        camera.place(
+          [b.pos[0] - Math.sin(b.yaw) * back, b.pos[1] + 2.6 + b.speed * 0.05, b.pos[2] - Math.cos(b.yaw) * back],
+          [b.pos[0] + Math.sin(b.yaw) * 2, b.pos[1] + 0.7, b.pos[2] + Math.cos(b.yaw) * 2],
+          1.05,
+        );
+      }
       cameraDistance = Math.hypot(camera.position[0] - shown[0], camera.position[1] - shown[1], camera.position[2] - shown[2]);
       if (player.vehicle.inWater && phase.name === 'driving') {
         waterTime += simDt;
@@ -1709,10 +1847,15 @@ export function createGame(deps) {
         hudStatus.purse = { cash: purse.cash, lastDelta: purseAge < 6 ? purseDelta : 0, lastAt: purseAge, best: purse.best };
         hudStatus.foot = onFoot ? {
           onFoot: true, gun: gun.weapon ? gun.weapon.name : null, magazine: gun.inMagazine, reserve: gun.reserve,
-          state: gun.state, stamina: foot.stamina, out: foot.out, boarding: !!foot.near,
+          state: gun.state, stamina: foot.stamina, out: foot.out, boarding: !!foot.near || boarding.active,
+          health: vitals.health, oxygen: vitals.oxygen, swimming: foot.swimming, submerged: foot.submerged,
+          dead: vitals.dead,
+          boat: boatDriven >= 0 ? (boats.get(boatDriven).name) : (boatNear ? boatNear.name : null),
           door: inShop ? (shopSaid || 'E for the door')
-            : gun.weapon && gun.needReload ? 'R for a magazine'
-              : !onFoot && shopNear ? 'E for the shop' : null,
+            : boarding.active ? (boarding.phase === 'pull' ? 'Getting him out' : 'Getting in')
+              : boatNear && !foot.near ? 'F for the boat'
+                : gun.weapon && gun.needReload ? 'R for a magazine'
+                : !onFoot && shopNear ? 'E for the shop' : null,
         } : (foot.near ? { onFoot: false, boarding: false, door: 'F to get out' } : null);
         races.step(stepTime, playerPos2, phase.name === 'driving');
         hudStatus.race = races.snapshot();

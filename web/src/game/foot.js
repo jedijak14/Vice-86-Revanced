@@ -33,6 +33,12 @@ const CAM_BACK = 3.4, CAM_UP = 1.45, CAM_PITCH = -0.10;
 const FALL_SPEED = 22, HARD_LAND = 7.5;
 /** Metres a down-cast is sent looking for a floor: enough for a fall to be seen coming, short of the sea bed. */
 const FALL_DEPTH = 26;
+/** m/s: a swimmer is slower than a walker and much slower than a runner, and that is the point of water. */
+export const SWIM_SPEED = 1.7, SWIM_RUN = 2.7;
+/** Metres of water that make a swimmer of a man: shallower than this he wades, deeper than this he swims. */
+export const SWIM_DEPTH = 0.62;
+/** Metres of the body under the surface: afloat with the chin out, and diving when the key goes down. */
+const SWIM_DRAFT = 0.42, DIVE_DRAFT = 1.15;
 
 /**
  * @param {{
@@ -54,6 +60,8 @@ export function createFoot(deps = {}) {
    * street's level is never below this, so an unstreamed tile is a soft landing and not a hole.
    */
   const underfloor = Number.isFinite(deps.floor) ? deps.floor : -Infinity;
+  /** The water's surface at a point, or null where the world has none: the game owns the coast map. */
+  const waterAt = typeof deps.water === 'function' ? deps.water : null;
   const height = deps.height || 1.78;
   const onLand = deps.onLand || null;
   const cast = [0, 0, 0], dir = [0, 0, 0], out = [0, 0, 0];
@@ -88,6 +96,11 @@ export function createFoot(deps = {}) {
     /** Whether the body came off the street's shelf (and so must be given back). */
     borrowed: false,
     turn: 0,
+    /** The surface height at the body's last step, or null on dry land; and whether he is in it. */
+    water: null,
+    swimming: false,
+    /** The head under the surface: what empties the lung in game/vitals.js. Diving is a held crouch. */
+    submerged: false,
 
     /** Sets the walker down somewhere: leaving a car, arriving in a room, a new game. */
     place(x, y, z, yaw = 0) {
@@ -201,7 +214,9 @@ export function createFoot(deps = {}) {
       if (foot.stamina <= 0) foot.out = true;
       else if (foot.out && foot.stamina >= RUN_RECOVER) foot.out = false;
 
-      const speed = foot.gait > 0 ? RUN_SPEED : foot.gait < 0 ? CROUCH_SPEED : WALK_SPEED;
+      const wade = foot.swimming;                    // one step old: the depth is measured below, last frame
+      const speed = wade ? (foot.gait > 0 ? SWIM_RUN : SWIM_SPEED)
+        : foot.gait > 0 ? RUN_SPEED : foot.gait < 0 ? CROUCH_SPEED : WALK_SPEED;
       if (drive > 0.02) {
         // The feet turn towards the thumb, at a rate a person could manage: no instant spin, because a
         // body that snaps round has no weight in it.
@@ -255,16 +270,33 @@ export function createFoot(deps = {}) {
         if (down.hit) ground = Math.max(underfloor, from - down.dist);
       }
       foot.ground = ground;
-      if (foot.pos[1] > ground + GROUND_SNAP) {
+      // The water: wherever the coast map says the surface is, and deep enough to swim in rather than
+      // wade. A swimmer is not a faller — gravity lets go of him and the surface takes him, at a draft
+      // that leaves the chin out, or the whole body under while the dive key is held.
+      const waterY = waterAt ? waterAt(foot.pos[0], foot.pos[2]) : null;
+      foot.water = waterY;
+      const deep = waterY !== null && ground < waterY - SWIM_DEPTH;
+      foot.swimming = deep;
+      foot.submerged = deep && intent.crouch > 0.5;
+      if (deep) {
+        const draft = foot.submerged ? DIVE_DRAFT : SWIM_DRAFT;
+        const target = waterY - draft;
+        foot.pos[1] += (target - foot.pos[1]) * (1 - Math.exp(-5 * dt));
+        foot.vel[1] = 0;
+        foot.grounded = false;
+        foot.fall = 0;
+        foot.state = 'swim';
+      } else if (foot.pos[1] > ground + GROUND_SNAP) {
         foot.vel[1] = Math.max(-FALL_SPEED, foot.vel[1] - 24 * dt);
         foot.pos[1] += foot.vel[1] * dt;
         foot.grounded = false; foot.fall += dt;
         foot.state = 'fall';
       } else {
         const hard = foot.vel[1] < -HARD_LAND;
+        const impact = -foot.vel[1];              // m/s downwards, for vitals to price the landing
         const wasAirborne = !foot.grounded;
         foot.pos[1] = ground; foot.vel[1] = 0; foot.grounded = true;
-        if (wasAirborne) { foot.state = 'land'; foot.fall = 0; if (onLand) onLand(ground, hard); }
+        if (wasAirborne) { foot.state = 'land'; foot.fall = 0; if (onLand) onLand(ground, hard, impact); }
       }
       // What is beside him. Boarding is offered by the world rather than guessed at by the UI: the car has
       // to be nearly stopped and he has to be at the door side, not under the wheels. Two cars may be in
@@ -284,7 +316,7 @@ export function createFoot(deps = {}) {
       }
       // The gait describes the legs, the air describes the body: a man falling with the thumb forward is
       // falling, not walking, and one who has just landed is landing for exactly one frame.
-      if (foot.state !== 'land' && foot.state !== 'fall') {
+      if (foot.state !== 'land' && foot.state !== 'fall' && foot.state !== 'swim') {
         foot.state = foot.moving > 0.25 ? (foot.gait > 0 ? 'run' : foot.gait < 0 ? 'crouch' : 'walk') : 'idle';
       }
 
@@ -292,7 +324,8 @@ export function createFoot(deps = {}) {
       // the clock says. A stationary player still gets a frame: the pose has to be written at least once.
       if (foot.person) {
         foot.person.place(foot.pos[0], foot.pos[1], foot.pos[2], foot.yaw);
-        const role = foot.state === 'run' ? 'run' : foot.state === 'walk' ? 'walk' : null;
+        const role = foot.state === 'swim' ? (foot.moving > 0.25 ? 'swim' : 'tread')
+          : foot.state === 'run' ? 'run' : foot.state === 'walk' ? 'walk' : null;
         if ((role || foot.role) && role !== (foot.role && foot.role.name)) foot.play(role);
         foot.person.frame(dt, moved);
       }
@@ -349,6 +382,8 @@ export function createFoot(deps = {}) {
         pos: [foot.pos[0], foot.pos[1], foot.pos[2]], yaw: foot.yaw, grounded: foot.grounded,
         near: foot.near ? Math.round(foot.near.distance * 100) / 100 : null, out: foot.out,
         body: !!foot.person, borrowed: foot.borrowed, surface: foot.surface,
+        swimming: foot.swimming, submerged: foot.submerged,
+        water: foot.water === null ? null : Math.round(foot.water * 100) / 100,
       };
     },
   };

@@ -16,6 +16,7 @@
 import { Gltf } from '../../core/gltf.js';
 import { Rig, Player, createPose } from '../../core/animate.js';
 import { MeshBuilder } from '../../core/mesh.js';
+import { swimClips } from '../../core/swimclip.js';
 import { FAMILY, VEHICLE, VERTEX_STRIDE } from '../../core/ids.js';
 
 /** Where the parts come from. Both packs are CC0; see docs/ASSETS.md for the receipts. */
@@ -65,6 +66,13 @@ export const ROLES = Object.freeze({
   down: { clip: 'Death_A', stride: 0 },
   lie: { clip: 'Lie_Idle', stride: 0 },
   sit: { clip: 'Sit_Chair_Idle', stride: 0 },
+  sitdown: { clip: 'Sit_Chair_Down', stride: 0 },
+  standup: { clip: 'Sit_Chair_StandUp', stride: 0 },
+  swim: { clip: 'Swim_Free', stride: 1.9 },
+  tread: { clip: 'Swim_Tread', stride: 0 },
+  aim2: { clip: 'Ranged_2H_Aiming', stride: 0 },
+  shoot2: { clip: 'Ranged_2H_Shoot', stride: 0 },
+  reload2: { clip: 'Ranged_2H_Reload', stride: 0 },
 });
 
 const url = (pack, name) => `assets/models/${pack}/${name}.glb`;
@@ -127,6 +135,9 @@ export async function loadCast({ fetchFile, decodeImage = null, only = CHARACTER
     }
   }
   if (!clips.length) throw new Error('Cast: no animation clips were found in the vendored packs.');
+  // The water: no licence we can reach carries a swimming clip, so the stroke is synthesised (see
+  // core/swimclip.js) and joins the shelf here, retargeted by the same names as everything vendored.
+  for (const clip of swimClips()) clips.push(clip);
 
   for (const name of only) {
     if (!want.has(name)) continue;
@@ -272,7 +283,9 @@ export function retargetClips(cast, character) {
     seen.add(clip.name);
     const channels = [];
     for (const ch of clip.channels) {
-      const name = clip.sourceNodes?.[ch.node];
+      // A vendored channel names its bone by index into the file it came from; a synthesised one (see
+      // core/swimclip.js) carries the name itself, having no file to point at.
+      const name = ch.name !== undefined ? ch.name : clip.sourceNodes?.[ch.node];
       if (!name) continue;
       const node = rig.node(name);
       if (node < 0) continue;                                  // an IK or control bone: no clip on it

@@ -19,9 +19,11 @@ import { clamp } from '../core/math.js';
 
 /** The guns the street can find. `rate` is shots per second, `spread` radians of half-angle per shot. */
 export const WEAPONS = Object.freeze({
-  pistol: { name: 'Short .38', magazine: 6, reserve: 24, rate: 2.6, spread: 0.006, move: 0.02, reach: 160, stun: 0.55 },
-  shotgun: { name: '12-gauge', magazine: 6, reserve: 18, rate: 0.9, spread: 0.03, move: 0.055, reach: 55, pellets: 8, stun: 0.9 },
-  smg: { name: '9 mm machine pistol', magazine: 32, reserve: 64, rate: 11, spread: 0.014, move: 0.075, reach: 120, stun: 0.45 },
+  // `hands` is how the body holds it, and therefore which of the vendored stance clips it wears:
+  // one hand on the .38, two on the long guns (see world/people/cast.js ROLES).
+  pistol: { name: 'Short .38', hands: 1, magazine: 6, reserve: 24, rate: 2.6, spread: 0.006, move: 0.02, reach: 160, stun: 0.55 },
+  shotgun: { name: '12-gauge', hands: 2, magazine: 6, reserve: 18, rate: 0.9, spread: 0.03, move: 0.055, reach: 55, pellets: 8, stun: 0.9 },
+  smg: { name: '9 mm machine pistol', hands: 2, magazine: 32, reserve: 64, rate: 11, spread: 0.014, move: 0.075, reach: 120, stun: 0.45 },
 });
 /** Seconds to work a magazine: the game refuses a shot for this long, and plays the sound for it. */
 export const RELOAD_SECONDS = Object.freeze({ pistol: 1.4, shotgun: 2.6, smg: 2.0 });
