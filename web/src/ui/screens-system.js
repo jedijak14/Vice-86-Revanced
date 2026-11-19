@@ -13,6 +13,8 @@ export const LOADING_TIPS = Object.freeze([
   'T steps the time of day; Y changes the weather.',
   'H switches the headlamps; the dipped-beam symbol shows under the gear.',
   'C changes the camera; G sounds the horn.',
+  'F gets you out, and gets you into a car or a boat you walk up to.',
+  'M turns the radio dial: three stations, and it only plays while you drive.',
   'R puts the car back on the nearest road if it gets stuck.',
   'Esc pauses. The settings there apply at once, even the graphics preset.',
 ]);

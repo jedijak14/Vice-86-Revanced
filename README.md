@@ -129,6 +129,13 @@ It needs WebGL 2 with float render targets and WebAssembly, and boots by itself.
 skips the title, `?drive=auto` lets the game drive itself, `?traffic=0..3` sets how many cars are
 on the road, `?quality=low|medium|high|ultra` overrides the picture, `?seed=`, `?pos=`, `?time=`,
 `?weather=` and `?mute=` place and dress the scene. See `web/src/ui/screens-system.js` for keys.
+On foot, `F` gets in and out and `B` draws; behind a wheel, `M` turns the radio dial.
+
+## On a desktop
+
+`desktop/` wraps the same page in Electron and `.github/workflows/desktop.yml` packages it for
+Windows on every `v*` tag, publishing the zip to Releases. Unzip, run the exe, drive: the folder
+carries the runtime and every asset, so it needs nothing installed and nothing online.
 
 ## Checking it
 

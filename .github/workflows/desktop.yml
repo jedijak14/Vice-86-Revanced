@@ -78,10 +78,10 @@ jobs:
           # The icon is ours and valid, but if a future packager disagrees about it, the release
           # should still ship: fall back to Electron's own icon rather than fail the run.
           if [ -f desktop/build/icon.ico ]; then
-            npx @electron/packager "${ARGS[@]}" --icon=desktop/build/icon.ico \
-              || npx @electron/packager "${ARGS[@]}"
+            npx electron-packager "${ARGS[@]}" --icon=desktop/build/icon.ico \
+              || npx electron-packager "${ARGS[@]}"
           else
-            npx @electron/packager "${ARGS[@]}"
+            npx electron-packager "${ARGS[@]}"
           fi
 
       - name: Zip it and checksum it
