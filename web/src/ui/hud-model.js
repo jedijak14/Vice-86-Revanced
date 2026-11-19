@@ -168,6 +168,7 @@ export function createHudModel() {
     oxygen: 1,           // 0..1: the air left in him
     airOn: false,        // whether the air bar is news enough to show
     watch: '',           // inside a watched zone: the lens, or the eyes, that have you
+    voice: '',           // the line somebody on the street is saying out loud
     jail: '',            // in custody: the bail, the wall, the guard
   };
 }
@@ -275,6 +276,12 @@ function jailLine(j) {
   return `bail $${j.bail} \u00b7 E pays it \u00b7 hold Space for the wall${pct > 0 ? ` \u00b7 bars ${pct}%` : ''}${j.guardNear ? ' \u00b7 guard close' : ''}`;
 }
 
+/** The street talking: who said it, and the words, while the recording lasts. */
+function voiceLine(v) {
+  if (!v || !v.text) return '';
+  return v.who ? `${v.who}: \u201c${v.text}\u201d` : `\u201c${v.text}\u201d`;
+}
+
 function crewLine(net) {
   if (!net || !net.room) return '';
   if (!net.peers) return `Room ${net.room} · waiting`;
@@ -347,6 +354,7 @@ export function updateHudModel(model, input, units, now) {
   model.airOn = !!walker && (walker.oxygen !== undefined && walker.oxygen < 0.995 || !!walker.swimming || !!walker.submerged);
   model.watch = watchLine(input.watch);
   model.jail = jailLine(input.jail);
+  model.voice = voiceLine(input.voice);
 
   // The banner appears when the car enters a district (including the first one of a drive) and
   // leaves after a hold. Leaving every district (open water, bridges) announces nothing.

@@ -118,6 +118,7 @@ function buildRows(doc) {
     radio: build('radio', 'radio', 'Radio'),
     watch: build('watch', 'camera', 'Eyes'),
     jail: build('jail', 'lock', 'Custody'),
+    voice: build('voice', 'voice', 'Street'),
     root: null,
   };
 }
@@ -157,7 +158,7 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
   const vitals = buildVitals(doc);
   const banner = el(doc, 'div', 'hud__banner');
   const place = el(doc, 'div', 'hud__place');
-  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root, rows.foot.root, rows.vitals.root, rows.radio.root, rows.watch.root, rows.jail.root);
+  rows.root = el(doc, 'div', 'hud__rows', rows.mission.root, rows.race.root, rows.crew.root, rows.foot.root, rows.vitals.root, rows.radio.root, rows.watch.root, rows.jail.root, rows.voice.root);
   vitals.root = el(doc, 'div', 'hud__vitals', vitals.health.root, vitals.air.root);
   // The reference layout: the money, the stars and the hour share the top right; the bars own the
   // top left; everything the street has to say stacks above the map, where the objectives sit.
@@ -184,8 +185,8 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
     police: textWriter(police.text),
     policeOn: classWriter(police.root, 'is-on'),
     policePip: police.pips.map((node) => classWriter(node, 'is-on')),
-    row: ['mission', 'race', 'crew', 'purse', 'foot', 'vitals', 'radio', 'watch', 'jail'].map((name) => textWriter(rows[name].text)),
-    rowOn: ['mission', 'race', 'crew', 'purse', 'foot', 'vitals', 'radio', 'watch', 'jail'].map((name) => classWriter(rows[name].root, 'is-on')),
+    row: ['mission', 'race', 'crew', 'purse', 'foot', 'vitals', 'radio', 'watch', 'jail', 'voice'].map((name) => textWriter(rows[name].text)),
+    rowOn: ['mission', 'race', 'crew', 'purse', 'foot', 'vitals', 'radio', 'watch', 'jail', 'voice'].map((name) => classWriter(rows[name].root, 'is-on')),
     lamps: classWriter(gauge.lamps, 'is-on'),
     brake: classWriter(gauge.brake, 'is-on'),
     nitrous: styleWriter(gauge.nitrous, 'stroke-dashoffset'),
@@ -317,7 +318,7 @@ export function createHud({ doc, parent, settings, win = doc.defaultView, now = 
       // Stars, not pips: the wanted level is what the row carries, and the line beside it says what
       // the agency is doing about it. A star that is lit is the department's own gold.
       for (let i = 0; i < police.pips.length; i++) write.policePip[i](model.stars > i);
-      const lines = [model.mission, model.race, model.crew, model.purse, model.foot, model.vitals, model.radio, model.watch, model.jail];
+      const lines = [model.mission, model.race, model.crew, model.purse, model.foot, model.vitals, model.radio, model.watch, model.jail, model.voice];
       for (let i = 0; i < lines.length; i++) {
         write.row[i](lines[i]);
         write.rowOn[i](Boolean(lines[i]));

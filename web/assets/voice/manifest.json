@@ -1,0 +1,75 @@
+{
+ "source": "generated with the Arena voice tools (voice-00 masculine, voice-01 feminine)",
+ "files": {
+  "f_carjack.wav": {
+   "bytes": 251982,
+   "sha256": "aba646a43a91235547bed749ad4378c245d00b69c355c21c7530f16a6db48219",
+   "seconds": 2.86,
+   "rate": 44100,
+   "channels": 1
+  },
+  "f_chase.wav": {
+   "bytes": 263246,
+   "sha256": "af45194dffc3b4c0795a322933797d2ba7c63057eb660aab9725fd2693c8031c",
+   "seconds": 2.98,
+   "rate": 44100,
+   "channels": 1
+  },
+  "f_greet.wav": {
+   "bytes": 274510,
+   "sha256": "cce548ccd357cbd660b2e94382b057955d24f392fbc56360b9556f70c944dc6f",
+   "seconds": 3.11,
+   "rate": 44100,
+   "channels": 1
+  },
+  "f_owner.wav": {
+   "bytes": 375886,
+   "sha256": "b2f9c452161125f2964d8b91d48065b08860497b430957aada8b225a01c3e70a",
+   "seconds": 4.26,
+   "rate": 44100,
+   "channels": 1
+  },
+  "f_shots.wav": {
+   "bytes": 398414,
+   "sha256": "cfbe9ad1d564551ec4260ba43eaad3149fce04e3dd675f13f434784aa691f6a4",
+   "seconds": 4.52,
+   "rate": 44100,
+   "channels": 1
+  },
+  "m_carjack.wav": {
+   "bytes": 149838,
+   "sha256": "0bfe5775559b6db38e821d532d7e2d9e5341e2fc8637a5f07bca9f7a355cfe0f",
+   "seconds": 3.12,
+   "rate": 24000,
+   "channels": 1
+  },
+  "m_chase.wav": {
+   "bytes": 147918,
+   "sha256": "bea27497733446009621daf1feb19bfc1fc458ba0eb0637d268947b037f290aa",
+   "seconds": 3.08,
+   "rate": 24000,
+   "channels": 1
+  },
+  "m_greet.wav": {
+   "bytes": 117198,
+   "sha256": "5cdda5fdbb6a5abc7b571cfda9a260c0ee469436a8378fcaf20a7383d41ab038",
+   "seconds": 2.44,
+   "rate": 24000,
+   "channels": 1
+  },
+  "m_owner.wav": {
+   "bytes": 170958,
+   "sha256": "319e810889e598c6fd911f5e20f0234ed26f4cef39a518cffd8689843b13c57f",
+   "seconds": 3.56,
+   "rate": 24000,
+   "channels": 1
+  },
+  "m_shots.wav": {
+   "bytes": 144078,
+   "sha256": "0b3e95070ad92d3c02feb1d1e586a07b9a5fa6a82da6f947cba0688c790cbe0a",
+   "seconds": 3.0,
+   "rate": 24000,
+   "channels": 1
+  }
+ }
+}
