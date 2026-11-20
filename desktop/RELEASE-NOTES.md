@@ -27,27 +27,33 @@ nothing else.
   are on: airspeed, altitude, vertical speed and heading in the air; road speed, gear, tacho,
   lean angle and fuel on two wheels.
 
-## Fixed in 0.11.1
+## Fixed in 0.11.2
 
-- **Every seat is on the left.** Getting into a car put your body at an undefined position,
-  because the boarding sequence read a third component out of a two-number heading — so the seat,
-  and the patch of dry land the game remembered you standing on, were both nonsense. Cars, boats,
-  aeroplanes and motorcycles now each place you at the seat they actually have, on the side the
-  steering wheel is already built on.
-- **The pavement has people on it again.** A dropped arrow in the code that sorts the street's
-  cast threw inside a promise that caught its own error and reported it as "the street could not
-  load its people" — so there was nobody to walk among, and no police to send after you.
-- **Firing a gun no longer throws.** The toast that names your witnesses read a variable that did
-  not exist, on every shot.
-- **The twin-engined commuter has two propellers.** Its nacelles drew one blade twice in the same
-  place, turning a stub through their own cowls.
-- **Walking goes the way you ask.** The keys that steer a car were handed to a pedestrian
-  backwards, and then turned a second time on the way in, so holding one key walked him off at an
-  angle to the hand asking. A left is now a left on foot, on two wheels, in a cockpit and in the
-  driver's seat.
-- **A leaning motorcycle carries its rider with it.** The saddle stayed where an upright machine
-  would have had it, which hung him off the outside of the corner he was actually in.
-- **An officer walks to the door he stopped**, not to where the cruiser's own heading said that
-  door was — a cruiser is never parked exactly square behind the car it pulled over.
-- **Ultra Low means Ultra Low.** Dropping the graphics preset mid-game stored a budget for how
-  many bodies to animate and never applied it, so a slow machine kept drawing every one.
+- **You get out of a car as a person now.** The street keeps a shelf of bodies to lend — one mesh
+  uploaded and reused, because building a pedestrian costs a few thousand vertices — and the two
+  functions that lend from it and take back to it were never put on the object the rest of the game
+  was handed. Every caller checked before asking, so nothing threw and nothing logged: the check
+  simply failed, and you stepped out onto the pavement invisible. The same shelf is where a
+  carjacked driver and the officers who walk you down come from, so a wanted level also never sent
+  anybody after you on foot, and a car you took with a man in it never had a man thrown out of it.
+- **Getting out of a boat, an aeroplane or a motorcycle leaves you standing, and looking.** Those
+  three put you down in the right place and then stopped: your body stayed parked on the shelf, and
+  the camera stayed on the chase rig with the picture still bolted to a machine you were standing
+  beside, so dragging the view spun a turntable that had nothing on it. One routine now stands a man
+  up whichever machine he has just left — body, camera, neck and the .38 under the seat — because
+  four copies of it is how three went stale.
+- **Climbing back into a boat takes the camera with you.** Untying her left the view on the free
+  camera the pavement uses, which follows nothing at all once the gunwale is moving.
+- **Pedestrians are solid.** A limb is lofted as a ring of quads, and the code that drew them drew
+  the second triangle of each quad as the first one wound backwards — which the renderer culls, so
+  half of every wall was missing. Arms, legs and torsos were spiral gaps with the far pavement
+  showing through them.
+- **Pedestrians wear their own colours.** A wardrobe is a grade laid over the vendored fantasy
+  shelf, whose painted colours are all one costume-department brown; a citizen's vertex colours
+  *are* its clothes and its face, chosen per person. Grading them anyway turned warm skin teal,
+  cream tees blue and a policeman's navy olive, and washed a street of individuals back into a
+  single palette.
+- **And they wear them on the right vertex.** A mesh builder's colour is authoring state,
+  snapshotted into each vertex at the moment it is pushed — and it was being set *after* the vertex,
+  so every one of them wore the colour of the one before it and the first was left white. A speck at
+  the root of the body, and a vertex of hair in skin tone down the seam of every part.

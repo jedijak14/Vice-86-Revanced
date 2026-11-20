@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 import { Gltf } from '../../web/src/core/gltf.js';
 import { Rig } from '../../web/src/core/animate.js';
 import { buildCitizen, buildCitizens, splitShelf } from '../../web/src/world/people/citizens.js';
+import { newPerson, WARDROBE } from '../../web/src/world/people/cast.js';
+import { VERTEX_STRIDE } from '../../web/src/core/ids.js';
 
 const b = readFileSync(new URL('../../web/assets/models/kaykit-adventures/Rogue.glb', import.meta.url));
 const gltf = new Gltf(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
@@ -37,6 +39,97 @@ test('every vertex rides one bone that exists, at full weight', () => {
     }
     assert.equal(c.triangles.length % 6, 0, 'double-wound for a renderer that culls');
   }
+});
+
+test('a citizen is a closed body, not a wall with half its quads missing', () => {
+  // Every prism here is double-wound, so half the index list is the other half backwards. What is left
+  // once the two windings are folded together is the surface, and a surface is closed where two of its
+  // triangles share an edge. A limb wall is a strip of quads and a quad is *two* triangles: emit the
+  // second one as the first one wound backwards instead of as the other half of the quad, and the wall
+  // keeps one diagonal stripe per segment and loses the rest — an arm you can see the pavement through,
+  // from every angle, on every pedestrian in the city.
+  //
+  // The count alone cannot catch it. The broken wall still emits two triangles per segment and still
+  // divides by six, so it passes a budget and a double-winding check while drawing half a person. Only
+  // the edges know: 15% of them were shared before this was fixed, and 63% are now. The rest stay open
+  // honestly, because a sleeve that meets a forearm is two prisms abutting, not one surface welded.
+  let worst = 1, worstOpen = 0, worstShared = 0;
+  for (const c of buildCitizens(base, { citizens: 10, officers: 2, seed: 4 })) {
+    const distinct = new Set();
+    for (let t = 0; t < c.triangles.length; t += 3) {
+      distinct.add([c.triangles[t], c.triangles[t + 1], c.triangles[t + 2]].slice().sort((x, y) => x - y).join(','));
+    }
+    assert.equal(distinct.size * 2, c.triangles.length / 3, 'each triangle drawn twice, once each way round');
+    const edges = new Map();
+    for (const key of distinct) {
+      const [a, b2, c2] = key.split(',').map(Number);
+      for (const [p, q] of [[a, b2], [b2, c2], [c2, a]]) {
+        const e = p < q ? `${p}|${q}` : `${q}|${p}`;
+        edges.set(e, (edges.get(e) || 0) + 1);
+      }
+    }
+    let open = 0, shared = 0;
+    for (const n of edges.values()) { if (n === 1) open++; else shared++; }
+    assert.equal(open + shared, edges.size);
+    const ratio = shared / edges.size;
+    if (ratio < worst) { worst = ratio; worstOpen = open; worstShared = shared; }
+  }
+  assert.ok(worst >= 0.5,
+    `only ${(worst * 100).toFixed(0)}% of its edges are shared (${worstShared} closed, ${worstOpen} open): a wall with gaps in it`);
+});
+
+/** A renderer that keeps the mesh it is handed, which is the only way to read the colours back. */
+function capturingRenderer(into) {
+  return {
+    createMesh: (data) => { into.data = data; return { id: 1 }; },
+    addDynamic: () => ({ matrix: new Float32Array(16), visible: true, remove() {} }),
+    refreshMesh() {}, destroyMesh() {},
+  };
+}
+/** The RGB a vertex actually carries in the interleaved buffer, 0..1. */
+function colourAt(data, v) {
+  const u8 = new Uint8Array(data.vertices), o = v * VERTEX_STRIDE + 20;
+  return [u8[o] / 255, u8[o + 1] / 255, u8[o + 2] / 255];
+}
+
+test('a citizen wears the colours it was built in, and the wardrobe does not grade them', () => {
+  // A wardrobe is a grade over the vendored shelf, whose painted fantasy colours are all one
+  // costume-department brown: 'street' cools it, 'night' puts it out. A citizen's vertex colours are its
+  // own clothes and face instead -- six skin tones, fourteen ordinary colours, a navy uniform with a
+  // brass badge -- so grading them at a weight of 0.55 turned a warm skin teal (blue over red, which no
+  // skin is), a cream tee blue and a policeman's navy olive, and washed a street of individuals back into
+  // one palette. That is half of why the pavement looked wrong; the other half was the wall below.
+  for (const citizen of buildCitizens(base, { citizens: 4, officers: 2, seed: 9 })) {
+    for (const wardrobe of [WARDROBE[0], WARDROBE[3]]) {
+      const into = {};
+      newPerson(capturingRenderer(into), { clips: [] }, citizen, { wardrobe, seed: 1 });
+      // Every vertex, not a sample: the colours were set *after* each vertex was pushed, and a
+      // MeshBuilder snapshots its colour state at push time, so the whole body was painted one vertex
+      // late and the first vertex wore the builder's default white. A sample of four would have missed
+      // it, which is the difference between a mesh that reads and a mesh with a white speck on it.
+      for (let v = 0; v < citizen.vertexCount; v++) {
+        const got = colourAt(into.data, v);
+        for (let k = 0; k < 3; k++) {
+          assert.ok(Math.abs(got[k] - citizen.colors[v * 3 + k] / 255) < 1.6 / 255,
+            `${citizen.name} in '${wardrobe.id}': vertex ${v} channel ${k} is ${got[k].toFixed(3)}, ` +
+            `built as ${(citizen.colors[v * 3 + k] / 255).toFixed(3)}`);
+        }
+      }
+    }
+  }
+  // And the grade is still there for the shelf that needs it: the same arrays without `citizen` on them
+  // come back shifted towards the wardrobe, which is the whole of what a wardrobe is for.
+  const plain = buildCitizen(base, 5);
+  const vendored = { ...plain, citizen: false, name: 'vendored' };
+  const into = {};
+  newPerson(capturingRenderer(into), { clips: [] }, vendored, { wardrobe: WARDROBE[0], seed: 1 });
+  let moved = 0;
+  for (let v = 0; v < vendored.vertexCount; v++) {
+    const got = colourAt(into.data, v);
+    for (let k = 0; k < 3; k++) if (Math.abs(got[k] - vendored.colors[v * 3 + k] / 255) > 1.6 / 255) moved++;
+  }
+  assert.ok(moved > vendored.vertexCount,
+    `a graded body shifts most of its channels; only ${moved} of ${vendored.vertexCount * 3} did`);
 });
 
 test('the shelf is citizens with two officers last, and the seed is a face', () => {
