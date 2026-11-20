@@ -189,3 +189,39 @@ test('the shelf is split into the police and everybody else, by index, and the s
   assert.deepEqual(splitShelf([]), { officers: [], citizens: [] });
   assert.deepEqual(splitShelf(null), { officers: [], citizens: [] });
 });
+
+test('a citizen is scaled by its own height, not the vendored body it was built on', () => {
+  // `newPerson` scales a figure by `height / character.authored`, so `authored` has to be the height of
+  // the figure actually being drawn. A citizen is lofted as prisms run between the rig's joints, while
+  // the KayKit mesh sharing that skeleton is drawn well outside them -- 2.19 units of mesh against 1.82
+  // of citizen -- and inheriting the mesh's number divided every pedestrian by a height nobody on the
+  // shelf has. Asked for 1.78 m the street drew 1.48 m: a crowd that came up to the roof of the car
+  // parked beside it, and a player who shrank by a third of a metre getting out of his own car.
+  //
+  // The synthetic base above is authored at 1.8, which is close enough to a citizen's own height to hide
+  // a 17% error, so the invariant is stated instead of the number: whatever the base claims, the figure
+  // measures itself.
+  const short = buildCitizen({ ...base, authored: 1.2 }, 9);
+  const tall = buildCitizen({ ...base, authored: 3.4 }, 9);
+  assert.equal(short.authored, tall.authored,
+    'the height a citizen is scaled by is its own, and not the number it was handed');
+  assert.ok(Math.abs(short.authored - 1.74) < 0.12, `and it is a person: ${short.authored.toFixed(3)} m of body`);
+
+  // What comes out the other end: a body asked to be 1.78 m is drawn 1.78 m tall to the crown, and
+  // headwear rides along above that rather than counting toward it.
+  for (const c of buildCitizens(base, { citizens: 10, officers: 2, seed: 9 })) {
+    const drawn = (c.bounds[4] - c.bounds[1]) * (1.78 / c.authored);
+    assert.ok(drawn >= 1.77 && drawn <= 1.95,
+      `${c.name} asked for 1.78 m is drawn at ${drawn.toFixed(3)} m`);
+  }
+
+  // A cap is not a reason to shrink the person wearing it, which is the whole reason the body is measured
+  // without its headwear: an officer's cap stands above his crown, and his divisor does not follow it.
+  const officer = buildCitizens(base, { citizens: 0, officers: 1, seed: 9 })[0];
+  assert.equal(officer.police, true, 'the officer is the one in the cap');
+  const crown = officer.authored;
+  assert.ok(officer.bounds[4] - officer.bounds[1] > crown + 0.02,
+    'the cap is above the crown in the mesh');
+  assert.ok(Math.abs(crown - short.authored) < 0.06,
+    `and it is not in the divisor: officer ${crown.toFixed(3)} against citizen ${short.authored.toFixed(3)}`);
+});

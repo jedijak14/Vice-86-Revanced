@@ -154,7 +154,10 @@ export function buildCitizen(base, seed, opts = {}) {
   limb(mid(chest, head, 0.55), mid(chest, head, 0.9), 0.05, 0.05, skin, bi('chest'), 6);
   const headR = 0.095 * (0.94 + r() * 0.12);
   limb(mid(chest, head, 0.9), [head[0], crown - headR * 0.55, head[2]], headR, headR * 0.92, skin, bi('head'), 8, true, false, 1.08);
-  // Hair and hats sit on the skull.
+  // Hair and hats sit on the skull. Where they start and end is remembered, because a cap is not a
+  // reason to shrink the person wearing it: the height a figure is scaled by comes from the body alone,
+  // here exactly as it does for the vendored shelf in cast.js.
+  const headwearFrom = positions.length / 3;
   if (hairStyle === 'short' || hairStyle === 'long' || hairStyle === 'bun') {
     limb([head[0], crown - headR * 0.75, head[2]], [head[0], crown + headR * 0.28, head[2]], headR * 1.06, headR * 0.7, hair, bi('head'), 8, true, false, 1.1, 1);
     if (hairStyle === 'long') limb([head[0], crown - headR * 0.6, head[2] - headR * 0.7], [head[0], chest[1] + 0.06, head[2] - headR * 0.8], headR * 0.8, headR * 0.5, hair, bi('head'), 6, true, true, 0.5, 1);
@@ -165,6 +168,7 @@ export function buildCitizen(base, seed, opts = {}) {
     limb([head[0], crown - headR * 0.5, head[2]], [head[0], crown + headR * (police ? 0.5 : 0.3), head[2]], headR * 1.08, headR * (police ? 0.82 : 0.6), capCol, bi('head'), 8, true, false, 1.1, 0.25);
     box([head[0], crown - headR * 0.42, head[2] + headR * 1.15], headR * 0.85, headR * 0.1, headR * 0.55, police ? POLICE.cap : capCol, bi('head'));
   }
+  const headwearTo = positions.length / 3;
   // Arms: sleeve over the upper arm (short for a tee, long for a jacket), forearm, hand.
   for (const [side, tag] of [[1, 'l'], [-1, 'r']]) {
     const ua = J(`upperarm.${tag}`), la = J(`lowerarm.${tag}`), wr = J(`wrist.${tag}`), ha = J(`hand.${tag}`);
@@ -193,19 +197,38 @@ export function buildCitizen(base, seed, opts = {}) {
   }
 
   const bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  // The body on its own, which is what the figure is scaled by: the same distinction cast.js makes when
+  // it measures a vendored character, so that headwear rides along at the size the body implies.
+  const bodyBounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (let i = 0; i < positions.length; i += 3) {
+    const headwear = i / 3 >= headwearFrom && i / 3 < headwearTo;
     for (let k = 0; k < 3; k++) {
       if (positions[i + k] < bounds[k]) bounds[k] = positions[i + k];
       if (positions[i + k] > bounds[k + 3]) bounds[k + 3] = positions[i + k];
+      if (!headwear) {
+        if (positions[i + k] < bodyBounds[k]) bodyBounds[k] = positions[i + k];
+        if (positions[i + k] > bodyBounds[k + 3]) bodyBounds[k + 3] = positions[i + k];
+      }
     }
   }
+  /**
+   * This figure's own height, and not the vendored body's.
+   *
+   * A citizen is lofted as prisms run between the rig's joints, while the KayKit mesh that shares that
+   * skeleton is drawn well outside it, so the two are not the same size: the mesh stands 2.19 units and a
+   * citizen about 1.82. `newPerson` scales a figure by `height / character.authored`, so inheriting the
+   * mesh's number here divided by a height nobody on this shelf has, and every pedestrian the street
+   * asked to be 1.78 m was drawn at 1.48 m -- a crowd that came up to the roof of the car parked beside
+   * it, and a player who got out of his own car and shrank by a third of a metre doing it.
+   */
+  const authored = Math.max(0.2, bodyBounds[4] - bodyBounds[1]);
   return {
     name: opts.name || (police ? `officer${seed}` : `citizen${seed}`),
     gltf: base.gltf, rig: base.rig, texture: null,
     positions: new Float32Array(positions), normals: new Float32Array(normals),
     colors, joints: new Uint8Array(joints), weights: new Uint8Array(weights),
     triangles: Int32Array.from(tris), vertexCount: positions.length / 3, sway: Float32Array.from(sways),
-    bounds, authored: base.authored, bodyHeight: base.authored, heightScale: 1,
+    bounds, authored, bodyHeight: authored, heightScale: 1,
     police, citizen: true, style, sex,
   };
 }
