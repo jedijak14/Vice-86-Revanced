@@ -27,6 +27,13 @@ nothing else.
   are on: airspeed, altitude, vertical speed and heading in the air; road speed, gear, tacho,
   lean angle and fuel on two wheels.
 
+## Fixed in 0.11.5
+
+- **The game no longer stops when you first get out of a car.** The harbour fleet was reading each
+  landmark's original `pos: [x, z]` layout field, but the page-side world plan has already flattened
+  it to separate `x` and `z` fields. That left `pos` undefined and crashed while the game tried to
+  place boats. Boat placement now accepts the page-side plan shape (and safely skips malformed records).
+
 ## Fixed in 0.11.4
 
 - **A graphics driver that resets itself no longer ends the game.** Windows resets a card that has

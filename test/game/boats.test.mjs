@@ -24,6 +24,21 @@ test('a marina keeps boats in its water, and a cafe keeps none', () => {
   }
 });
 
+test('page-side plan landmarks use x/z coordinates and malformed records are skipped', () => {
+  const pagePlan = { landmarks: [
+    { kind: 'marina', x: 40, z: 12 },
+    { kind: 'boatyard', x: 40, z: 66 },
+    { kind: 'marina' },
+    null,
+    { kind: 'cafe', x: 40, z: 40 },
+  ] };
+  const fleet = createBoats({ plan: pagePlan, field, water: () => 0 });
+  assert.equal(fleet.count, 2, 'the page plan creates boats for valid waterside landmarks only');
+  for (const entry of fleet.boats) {
+    assert.equal(field(entry.boat.pos[0], entry.boat.pos[2]).kind, 'water');
+  }
+});
+
 test('a hand reaches the nearest gunwale, and no further', () => {
   const fleet = createBoats({ plan, field, water: () => 0 });
   const b = fleet.boats[0].boat;

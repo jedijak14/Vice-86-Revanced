@@ -90,13 +90,19 @@ export function createBoats(deps = {}) {
   let made = 0;
   for (const lm of landmarks) {
     if (made >= MAX_BOATS) break;
-    if (!WATERSIDE.has(lm.kind)) continue;
+    if (!lm || !WATERSIDE.has(lm.kind)) continue;
+    // The worker's layout landmarks use `pos: [x, z]`; the page-side plan deliberately flattens those
+    // into `{ x, z }` before it crosses the worker boundary. Accept both shapes: game modules receive
+    // the page-side plan, while callers and tests may still have a layout record.
+    const lx = lm.pos && Number.isFinite(lm.pos[0]) ? lm.pos[0] : lm.x;
+    const lz = lm.pos && Number.isFinite(lm.pos[1]) ? lm.pos[1] : lm.z;
+    if (!Number.isFinite(lx) || !Number.isFinite(lz)) continue;
     // Cast a line from the door until the coast map says water: a marina's boats lie in its water, not
     // on its hard standing.
     let spot = null;
     for (let a = 0; a < 16 && !spot; a++) {
       const ang = (a / 16) * Math.PI * 2;
-      const x = lm.pos[0] + Math.sin(ang) * MOOR_CAST, z = lm.pos[1] + Math.cos(ang) * MOOR_CAST;
+      const x = lx + Math.sin(ang) * MOOR_CAST, z = lz + Math.cos(ang) * MOOR_CAST;
       if (field && field(x, z).kind === 'water') spot = [x, z, ang];
     }
     if (!spot) continue;
