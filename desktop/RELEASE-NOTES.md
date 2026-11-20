@@ -27,6 +27,21 @@ nothing else.
   are on: airspeed, altitude, vertical speed and heading in the air; road speed, gear, tacho,
   lean angle and fuel on two wheels.
 
+## Fixed in 0.11.3
+
+- **People are the height they were asked to be.** A citizen is lofted as prisms run between the
+  skeleton's joints, while the vendored mesh that shares that skeleton is drawn well outside them —
+  2.19 units of mesh against 1.82 of citizen — and citizens inherited the mesh's number as the height
+  they are scaled by. That number is the divisor every figure is measured against, so a pedestrian the
+  street asked to be 1.78 m was drawn at 1.48 m: a crowd that came up to the roof of the car parked
+  beside it, and a player who shrank by a third of a metre getting out of his own car. A cap is still
+  not a reason to shrink the person wearing it — the body is measured without its headwear, so an
+  officer's hat rides along above the crown instead of counting toward it.
+- **And the camera is back at your eye.** The walker's eye is a fixed 1.68 m above the pavement, which
+  is right for a 1.78 m man and was twenty centimetres above the head of the 1.48 m one. Since 0.11.2
+  is the first build that gave you a body on foot at all, that is the build in which the mismatch
+  became something you could see: the view was looking down at the top of your own head.
+
 ## Fixed in 0.11.2
 
 - **You get out of a car as a person now.** The street keeps a shelf of bodies to lend — one mesh
