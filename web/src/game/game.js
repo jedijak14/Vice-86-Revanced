@@ -386,6 +386,35 @@ export function createGame(deps) {
     lookBack: false, roughness: 0, bonnet: null, length: 0.5, height: 1.8, boost: 0,
   };
 
+  /**
+   * Standing on the street again, whichever machine he has just got out of. Called after `foot.place`,
+   * which has already put him somewhere and turned him to face it.
+   *
+   * Getting out of a *car* did all of this. Getting out of a boat, an aeroplane or a motorcycle did none
+   * of it: those three left his body parked on the crowd's shelf, so the man who climbed down was
+   * invisible, and left the camera in 'chase' with the neck in 'orbit', so dragging the picture spun a
+   * turntable that was no longer there and the view followed a car he was standing beside. One routine
+   * for one kind of thing -- a man now on his feet -- because four copies is how three of them went
+   * stale, and because the gun is stowed on the way into every one of them and so comes back out of
+   * every one of them.
+   * @param {boolean} [dry]  whether there is pavement under him rather than sea, and so a place worth
+   *   remembering: the shore puts a swimmer back on the last dry ground he stood on.
+   */
+  function standUp(dry = true) {
+    onFoot = true;
+    foot.attach(footCast, renderer);
+    // Standing, not still sitting in the seat he just left: the rider's own 'sit' was put on the body
+    // directly, and the frame's gait only takes over once he moves.
+    if (foot.person) { foot.person.visible(true); foot.person.role('idle'); }
+    foot.stamina = 1;
+    input.looking = true;                 // the picture is his neck now, not the turntable's
+    input.lookMode = 'neck';              // drag right looks right; the turntable's signs walk a man in circles
+    camera.setMode('free');
+    camera.snap();
+    gun.equip('pistol');                  // there is a short .38 under the driver's seat, as there was in 1986
+    if (dry) { drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2]; }
+  }
+
   /** Out of the car, at the door side, on the ground beside it, looking along the street. */
   function stepOut() {
     const p = player.pos, yaw = player.vehicle ? player.vehicle.yaw : 0;
@@ -394,17 +423,9 @@ export function createGame(deps) {
     // at a stop. A man put down at the centre of the car is a man standing in the engine, and the world's
     // first ray is the car's own body.
     foot.place(p[0] + Math.cos(yaw) * 1.35, p[1] + 0.05, p[2] - Math.sin(yaw) * 1.35, yaw);
-    foot.look.yaw = yaw; foot.look.pitch = -0.05;
-    foot.stamina = 1;
-    foot.attach(footCast, renderer);
-    drySpot[0] = foot.pos[0]; drySpot[1] = foot.pos[1]; drySpot[2] = foot.pos[2];
-    onFoot = true;
+    foot.look.pitch = -0.05;
+    standUp(true);
     if (audio) audio.door(false);         // the door he just came out of, swinging and shutting behind him
-    input.looking = true;                 // the picture is his neck now, not the turntable's
-    input.lookMode = 'neck';               // drag right looks right; the turntable's signs walk a man in circles
-    camera.setMode('free');
-    camera.snap();
-    gun.equip('pistol');                  // there is a short .38 under the driver's seat, as there was in 1986
     toast('On foot \u00b7 Space to fire, B to draw or stow, R to reload, F back in \u2014 or into any car you can reach');
   }
 
@@ -551,6 +572,11 @@ export function createGame(deps) {
     gun.stow();
     input.looking = false;
     input.lookMode = 'orbit';
+    // The chase camera, as the aeroplane and the motorcycle both take it on the way in. Getting over the
+    // side now leaves the camera on 'free' and the neck on the picture, and a man who climbs back aboard
+    // without this would be driving her through a camera bolted to nothing.
+    camera.setMode('chase');
+    camera.snap();
     if (audio) audio.door(true);
     toast(`${entry.name} · untied`);
   }
@@ -560,11 +586,9 @@ export function createGame(deps) {
     const entry = boats.get(boatDriven);
     const b = entry.boat;
     const right = [Math.cos(b.yaw), 0, -Math.sin(b.yaw)];
-    onFoot = true;
     boatDriven = -1;
     foot.place(b.pos[0] + right[0] * 1.9, SEA_Y - 0.2, b.pos[2] + right[2] * 1.9, b.yaw);
-    camera.setMode('chase');
-    camera.snap();
+    standUp(false);                       // over the side is into the sea: no dry ground to remember
     toast('Over the side');
   }
 
@@ -663,11 +687,9 @@ export function createGame(deps) {
     // of, and the same axis a positive roll banks about. He is put facing away from the wing.
     const lateral = [Math.cos(p.yaw), 0, -Math.sin(p.yaw)];
     const x = p.pos[0] + lateral[0] * 3.4, z = p.pos[2] + lateral[2] * 3.4;
-    onFoot = true;
     planeDriven = -1;
     foot.place(x, groundHeight(x, z), z, p.yaw + Math.PI * 0.5);
-    camera.setMode('chase');
-    camera.snap();
+    standUp(true);                        // the apron is as dry as a pavement, and worth remembering
     toast(p.crashed ? 'Out of the wreck' : 'On the tarmac');
   }
 
@@ -700,12 +722,9 @@ export function createGame(deps) {
     // kerb rather than in the road the machine was just in.
     const lateral = [Math.cos(bk.yaw), 0, -Math.sin(bk.yaw)];
     const x = bk.pos[0] + lateral[0] * 1.1, z = bk.pos[2] + lateral[2] * 1.1;
-    onFoot = true;
     bikeDriven = -1;
     foot.place(x, groundHeight(x, z), z, bk.yaw);
-    camera.setMode('chase');
-    camera.snap();
-    if (foot.person) { foot.person.visible(true); foot.person.role('idle'); }
+    standUp(true);                        // and off the kerb, which is dry ground like any other
     toast('Off');
   }
 

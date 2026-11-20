@@ -354,7 +354,15 @@ export function newPerson(renderer, cast, character, { height = 1.78, wardrobe =
 /** The rest-pose mesh, in the renderer's interleaved layout, with the character's painted colours. */
 function buildMeshData(character, wardrobe) {
   const b = new MeshBuilder(character.vertexCount);
-  const tint = wardrobe ? wardrobe.tint : null, weight = wardrobe ? wardrobe.weight : 0;
+  // A wardrobe is a grade over the vendored shelf, whose painted fantasy colours are all the same
+  // costume-department brown: 'street' cools it, 'heat' warms it, 'night' puts it out. A citizen is the
+  // other thing. Its vertex colours *are* its clothes and its face — six skin tones, fourteen ordinary
+  // colours, a navy uniform with a brass badge — chosen per person in world/people/citizens.js, so
+  // grading them at a weight of 0.55 turns a warm skin teal (blue over red, which no skin is), a cream
+  // tee blue and a policeman's navy olive, and washes a street of individuals back into one palette. A
+  // citizen therefore wears what it was built wearing, and the wardrobe it is handed is simply not used.
+  const graded = wardrobe && !character.citizen;
+  const tint = graded ? wardrobe.tint : null, weight = graded ? wardrobe.weight : 0;
   b.family(FAMILY.VEHICLE).material(VEHICLE.TRIM_BLACK, Math.round(0.92 * 255), 0, 0);
   const { positions, colors, triangles } = character;
   for (let v = 0; v < character.vertexCount; v++) {
@@ -364,9 +372,14 @@ function buildMeshData(character, wardrobe) {
       g = g * (1 - weight) + (tint[1] / 255) * weight * g * 2;
       bl = bl * (1 - weight) + (tint[2] / 255) * weight * bl * 2;
     }
+    // The colour first, then the vertex. A MeshBuilder's colour is authoring *state*, snapshotted into
+    // each vertex at the moment it is pushed, so setting it afterwards paints every vertex with the one
+    // before it and leaves the first wearing the builder's default — which is white. On a body lofted as
+    // a sequence of prisms that is a white speck at the root of the mesh and the wrong colour down the
+    // seam of each part: a vertex of hair in skin tone, a vertex of shoe in trouser cloth.
+    b.color(Math.min(1, r), Math.min(1, g), Math.min(1, bl));
     b.vertex(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2],
       character.normals[v * 3], character.normals[v * 3 + 1], character.normals[v * 3 + 2], 0, 0);
-    b.color(Math.min(1, r), Math.min(1, g), Math.min(1, bl));
   }
   for (let i = 0; i < triangles.length; i += 3) b.tri(triangles[i], triangles[i + 1], triangles[i + 2]);
   return {

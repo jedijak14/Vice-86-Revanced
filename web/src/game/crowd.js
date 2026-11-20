@@ -174,20 +174,45 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
   }
 
   /**
+   * Which face and which clothes a body is asked for, resolved to indices that exist.
+   *
+   * A caller may ask for a body without saying whose: boarding.js lends the driver of a carjacked car
+   * with nothing but an id. `undefined % n` is NaN, `characters[NaN]` is undefined, and that reached the
+   * mesh builder and threw — caught below and reported as "a pedestrian could not be built", so the man
+   * who was supposed to be pulled out of the car and thrown onto the street never existed at all. An
+   * unnamed body takes the next face round rather than always the first, so two carjackings in a row do
+   * not throw out identical twins.
+   */
+  let nextFace = 0;
+  function shelfSlot(p = {}) {
+    const n = (cast && cast.characters && cast.characters.length) || 0;
+    if (!n) return { face: 0, wear: 0, key: '0/0' };
+    const face = Number.isFinite(p.character) ? ((p.character % n) + n) % n : (nextFace = (nextFace + 1) % n);
+    const wear = Number.isFinite(p.wardrobe)
+      ? ((p.wardrobe % WARDROBE.length) + WARDROBE.length) % WARDROBE.length : 0;
+    return { face, wear, key: `${face}/${wear}` };
+  }
+  /** The key each lent body came off the shelf under, so it goes back to the same slot: a caller that
+   * hands back nothing but `{ person }` must still park it where the next such caller will find it. */
+  const lent = new WeakMap();
+
+  /**
    * A body for one person: the same character and tint as last time if one is parked, because building a
    * person means uploading a few thousand vertices and nobody should pay that every time a pedestrian
    * drifts in and out of the animation radius.
    */
   function takePerson(p) {
     if (!cast || !cast.characters || !cast.characters.length) return null;
-    const key = `${p.character}/${p.wardrobe}`;
+    const slot = shelfSlot(p || {});
     for (let i = 0; i < idlePeople.length; i++) {
-      if (idlePeople[i].key === key) return idlePeople.splice(i, 1)[0].person;
+      if (idlePeople[i].key === slot.key) return idlePeople.splice(i, 1)[0].person;
     }
     try {
-      return newPerson(renderer, cast, cast.characters[p.character % cast.characters.length], {
-        wardrobe: WARDROBE[p.wardrobe % WARDROBE.length], seed: p.id,
+      const person = newPerson(renderer, cast, cast.characters[slot.face], {
+        wardrobe: WARDROBE[slot.wear], seed: p && p.id,
       });
+      if (person) lent.set(person, slot.key);
+      return person;
     } catch (error) {
       if (!failed) console.error('A pedestrian could not be built from the vendored models', error);
       failed = true;
@@ -201,7 +226,8 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     p.person = null;
     if (failed) { person.remove(); return; }
     person.visible(false);
-    if (idlePeople.length < 24) idlePeople.push({ key: `${p.character}/${p.wardrobe}`, person });
+    const key = lent.get(person) || shelfSlot(p).key;
+    if (idlePeople.length < 24) idlePeople.push({ key, person });
     else person.remove();
   }
 
@@ -376,6 +402,23 @@ export function createCrowd({ graph, plan, renderer, seed = 7, land = 1.2, onEnd
     articulated: 0,
     /** Bodies currently in hand (drawn or parked on the shelf). */
     bodies() { return people.reduce((n, p) => n + (p.person ? 1 : 0), 0) + idlePeople.length; },
+    /**
+     * Lend a body, and take it back: the shelf the player's own figure, the owner thrown out of a
+     * carjacked car, and the officers who walk you down are all built from.
+     *
+     * These were the crowd's *private* functions. The street used them for its own pedestrians and
+     * nothing outside it could, so every caller that asked for a body guarded the call first and then
+     * quietly got nobody: a player who stepped out of a car and cast no figure at all, a carjacking with
+     * nobody landing on the asphalt, and a wanted level that never sent a single officer on foot because
+     * the count it computed was always zero. Three callers did not guard the hand-back at all, and were
+     * saved only by the fact that the lists they walked were filled by the guarded ones: one missing
+     * name hiding behind another, which is how it stayed quiet for a release.
+     */
+    takePerson,
+    handPersonBack,
+    /** Why the models did not arrive, when they did not. The game writes it; `people` reads it to say
+     * 'failed' rather than sitting on 'pending' forever. */
+    castError: null,
     /**
      * What the crowd put in front of the camera on the last frame it drew. A tool needs this because
      * `articulated: 1` alone cannot say whether that one body reached the renderer with triangles in it,

@@ -21,6 +21,19 @@ import { createTraffic } from '../../web/src/game/traffic.js';
 import { prepareLaneGraph } from '../../web/src/game/lanes.js';
 import { createPlanes } from '../../web/src/game/planes.js';
 import { createBikes } from '../../web/src/game/bikes.js';
+import { createCrowd } from '../../web/src/game/crowd.js';
+import { createVitals } from '../../web/src/game/vitals.js';
+import { createJail } from '../../web/src/game/jail.js';
+import { createWitness } from '../../web/src/game/witness.js';
+import { createNitrous } from '../../web/src/game/nitrous.js';
+import { createSkidMarks } from '../../web/src/game/skids.js';
+import { createBoarding } from '../../web/src/game/boarding.js';
+import { createCamera } from '../../web/src/game/camera.js';
+import { createClock } from '../../web/src/game/clock.js';
+import { createEffects } from '../../web/src/game/effects.js';
+import { createStoryline } from '../../web/src/game/storyline.js';
+import { createRadio } from '../../web/src/audio/radio.js';
+import { createVoice } from '../../web/src/audio/voice.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gameSource = readFileSync(join(here, '../../web/src/game/game.js'), 'utf8');
@@ -170,4 +183,47 @@ test('the hangar and the bike rack answer to what the frame loop calls them by',
   kerb.dispose();
   planes.dispose();
   bikes.dispose();
+});
+
+test('the crowd answers to what the frame loop calls it by, body shelf included', () => {
+  // The graph is null rather than the permissive stub because the crowd walks its lanes at construction,
+  // and a street with no lanes in it yet is a state the real game is in for the first few frames anyway.
+  const crowd = createCrowd({ graph: null, plan: {}, renderer: anything, seed: 7, land: 1.2, quality: 'medium' });
+  assertWired('crowd', crowd, 'game/crowd.js is the street, and game.js only knows these names');
+  // Named, because these three were the ones missing: `takePerson` and `handPersonBack` existed inside
+  // createCrowd and were never put on the object it returned, and `castError` was written by the game's
+  // cast loader and read by its diagnostics without ever being declared. Every caller guarded the first
+  // two, so nothing threw — the player just stepped out of a car with no body, a carjacked driver was
+  // never thrown onto the street, and a wanted level never sent anybody after him on foot, because the
+  // count of officers to send was computed from a method that was not there.
+  assert.equal(typeof crowd.takePerson, 'function', 'the shelf lends a body to whoever asks');
+  assert.equal(typeof crowd.handPersonBack, 'function', 'and takes it back again');
+  assert.ok('castError' in crowd, 'why the models did not arrive is somewhere to be read from');
+  assert.equal(crowd.takePerson({ character: 0, wardrobe: 0, id: 1 }), null, 'with no cast in, nobody is lent');
+});
+
+test('every other object the frame loop talks to answers to the name it is called by', () => {
+  // The same check as above, over the rest of the collaborators game.js builds and then reaches into from
+  // inside a branch that may run once a session: the cell, the witness, the nitrous, the skid marks, the
+  // door sequence, the clock, the effects, the two audio voices. A name that is not there is a TypeError
+  // inside frame(), which main.js turns into a stopped loop, and which presents to the player as a game
+  // that froze for no reason he can name. None of these are on the boot path, so nothing else catches it.
+  const built = [
+    ['vitals', createVitals({})],
+    ['jail', createJail({ toast: anything, purse: anything, wanted: anything })],
+    ['witness', createWitness({ shops: [], lots: [], crowd: anything, seed: 21 })],
+    ['nitrous', createNitrous({ audio: anything, seed: 3 })],
+    ['skids', createSkidMarks({ renderer: anything })],
+    ['boarding', createBoarding({ crowd: anything })],
+    ['camera', createCamera({})],
+    ['clock', createClock({ sky: anything, seed: 1, time: 'dusk', weather: 'clear' })],
+    ['effects', createEffects({ physics: anything, audio: anything, camera: anything, input: anything, settings: anything })],
+    ['storyline', createStoryline({ toast: anything, purse: anything, wanted: anything })],
+    ['radio', createRadio({ context: () => null, seed: 11 })],
+    ['voice', createVoice({ context: () => null })],
+  ];
+  for (const [owner, object] of built) {
+    assertWired(owner, object, `the object game.js builds and drives as \`${owner}\``);
+  }
+  assert.equal(built.length, 12, 'and the list above is the list this test walked');
 });

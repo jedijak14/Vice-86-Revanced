@@ -105,11 +105,15 @@ export function buildCitizen(base, seed, opts = {}) {
       return first;
     };
     const A = ring(a, r0), B = ring(ax, r1);
-    // Double-wound: the renderer culls back faces, and a prism seen from inside a sleeve is still a
-    // surface somebody is looking at.
+    // Both halves of every quad, and then the same two wound the other way. Double-wound because the
+    // renderer culls back faces and a prism seen from inside a sleeve is still a surface somebody is
+    // looking at; both halves because a quad is two triangles, and drawing the second one as the first
+    // one backwards leaves a diagonal gap down the whole wall — an arm that is a spiral of holes with
+    // the far pavement showing through it.
     for (let i = 0; i < sides; i++) {
       const j = (i + 1) % sides;
-      tris.push(A + i, A + j, B + j, A + i, B + j, A + j);
+      tris.push(A + i, A + j, B + j, A + i, B + j, B + i);   // out: bottom edge, diagonal, top edge
+      tris.push(A + i, B + j, A + j, A + i, B + i, B + j);   // and the same wall from the inside
     }
     if (capBot) for (let i = 1; i + 1 < sides; i++) tris.push(A, A + i + 1, A + i, A, A + i, A + i + 1);
     if (capTop) for (let i = 1; i + 1 < sides; i++) tris.push(B, B + i, B + i + 1, B, B + i + 1, B + i);
