@@ -27,6 +27,23 @@ nothing else.
   are on: airspeed, altitude, vertical speed and heading in the air; road speed, gear, tacho,
   lean angle and fuel on two wheels.
 
+## Fixed in 0.11.4
+
+- **A graphics driver that resets itself no longer ends the game.** Windows resets a card that has
+  taken too long over something — a TDR — and the browser loses its WebGL context while it happens.
+  The card comes back, the renderer rebuilds the street and the drive carries on: that is what the
+  code was written to do. But one five-second allowance covered the whole of it, armed when the card
+  went away and cleared only once the rebuild of the entire city had finished, so a reset that took
+  its time — which is what a reset does on a card that was already struggling — was reported as
+  "the graphics card did not come back" with the game stopped behind it. The two waits are separate
+  now, and each is long enough for what it is waiting for: thirty seconds for the driver, twenty for
+  the picture to be rebuilt.
+- **A recovery hands the drive back.** The game paused itself when the card went away and never
+  unpaused, so even a recovery that worked left the player on a pause screen they had not asked for,
+  with the street standing still behind it. It now carries on where it stopped — and only where the
+  loss is what paused it: a pause of the player's own is still theirs to lift, and a card lost while
+  standing in the showroom does not put them out on the street.
+
 ## Fixed in 0.11.3
 
 - **People are the height they were asked to be.** A citizen is lofted as prisms run between the
