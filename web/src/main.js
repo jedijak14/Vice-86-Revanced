@@ -17,6 +17,7 @@ import { createGame } from './game/game.js';
 import { buildVehicleModels, buildCarModel, buildGarageSet } from './game/models.js';
 import { chooseCar } from './game/garage.js';
 import { parseOptions, createHooks } from './game/automation.js';
+import { createContextRecovery } from './game/recovery.js';
 
 /** Where each module comes from. Tests replace entries; the page uses these. */
 const DEFAULT_LOADERS = Object.freeze({
@@ -32,8 +33,6 @@ const DEFAULT_LOADERS = Object.freeze({
   audio: () => import('./audio/index.js'),
 });
 
-// How long a lost WebGL context may take to come back before the game gives up and says so.
-const CONTEXT_RESTORE_MS = 5000;
 // Share of the loading bar at which each stage ends.
 const PROGRESS = Object.freeze({ shell: 0.03, renderer: 0.1, physics: 0.16, assets: 0.72, scene: 0.9, warmup: 0.98 });
 // Within the assets stage, which runs three jobs at once: their shares of that stretch.
@@ -329,13 +328,21 @@ export async function boot(env) {
       }
     });
     // The renderer rebuilds its own objects; the game only has to stop asking for frames meanwhile.
-    // A context that does not come back is an error like any other, not a frozen picture.
-    let restoreTimer = 0;
-    renderer.onContextLost = () => {
-      pacer.paused = true; game.pause();
-      restoreTimer = win.setTimeout(() => fail(contextLost(), 'waiting for the graphics card to come back'), CONTEXT_RESTORE_MS);
-    };
-    renderer.onContextRestored = () => { win.clearTimeout(restoreTimer); pacer.paused = false; pacer.restart(); };
+    // A context that does not come back is an error like any other, not a frozen picture. game/recovery.js
+    // holds the two waits -- the driver's recovery and the renderer's rebuild -- and why the second is
+    // not charged to the first's allowance.
+    const recovery = createContextRecovery({
+      timers: {
+        setTimeout: (fn, ms) => win.setTimeout(fn, ms),
+        clearTimeout: (id) => win.clearTimeout(id),
+      },
+      report: (error, what) => fail(error, what),
+      message: contextLost,
+      game, pacer,
+    });
+    renderer.onContextLost = recovery.lost;
+    renderer.onContextRestoring = recovery.restoring;
+    renderer.onContextRestored = recovery.restored;
 
     // ---- go
     stage = 'running';

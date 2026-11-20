@@ -705,6 +705,10 @@ export async function createRenderer(canvas, options = {}) {
     if (typeof api.onContextLost === 'function') api.onContextLost();
   }
   function onRestored() {
+    // The event is itself the news that the card is back, so say so before the rebuild below: a host
+    // waiting on a deadline must not be left counting the re-upload of the whole city as time the
+    // context was still missing. That is how a card which came back was reported as one that never did.
+    if (typeof api.onContextRestoring === 'function') api.onContextRestoring();
     // Every GL object is gone. Rebuild in dependency order; CPU-side data (meshes, instances, lights) was kept.
     ctx.ext.parallel = gl.getExtension('KHR_parallel_shader_compile'); ctx.ext.timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
     ctx.ext.aniso = gl.getExtension('EXT_texture_filter_anisotropic'); ctx.ext.floatLinear = gl.getExtension('OES_texture_float_linear');
@@ -739,8 +743,12 @@ export async function createRenderer(canvas, options = {}) {
     host,
     /** Live render targets ({ scene, post } of targets.js), for inspection tools only. */
     get internals() { return { scene: targets.scene, post: targets.post }; },
-    /** Optional callbacks, set by the game. */
-    onContextLost: null, onContextRestored: null,
+    /**
+     * Optional callbacks, set by the game. `onContextRestoring` fires as soon as the context is back,
+     * before the rebuild below has finished; `onContextRestored` fires when a frame can be drawn again.
+     * A host with a deadline for the card's return moves it to the rebuild when the first of these arrives.
+     */
+    onContextLost: null, onContextRestoring: null, onContextRestored: null,
     /**
      * The most light records an interior frame may pass at this quality (design/GARAGE.md). A room is a
      * few light cells across and every one of its lights reaches all of it, so the slots of one cell are
